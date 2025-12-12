@@ -1,0 +1,12 @@
+﻿node_modules/
+.env
+.env.production
+.env.development
+.env.local
+data/
+client/dist/
+client/node_modules/
+.DS_Store
+*.log
+npm-debug.log*
+logs/

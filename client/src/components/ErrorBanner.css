@@ -1,0 +1,72 @@
+.error-banner {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  max-width: 500px;
+  z-index: 9999;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.error-content {
+  background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+  color: white;
+  padding: 16px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.error-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.error-message {
+  flex: 1;
+}
+
+.error-message strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+.error-message p {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.95;
+  line-height: 1.4;
+}
+
+.error-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 24px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.error-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

@@ -1,0 +1,106 @@
+.ore-chart-container {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin: 1rem 0;
+}
+
+.ore-chart-title {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ore-chart-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.ore-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 2rem;
+  margin: 1rem 0;
+}
+
+.ore-chart-empty p {
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+.ore-chart-tooltip {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.ore-chart-tooltip .label {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.ore-chart-tooltip .value {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.1rem;
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.ore-chart-tooltip .percentage {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.ore-chart-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.summary-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.summary-value {
+  font-size: 1.25rem;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .ore-chart-container {
+    padding: 1rem;
+  }
+
+  .ore-chart-title {
+    font-size: 1.1rem;
+  }
+
+  .ore-chart-summary {
+    grid-template-columns: 1fr;
+  }
+}

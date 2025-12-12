@@ -1,0 +1,69 @@
+.mining-chart-container {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin: 1rem 0;
+}
+
+.mining-chart-title {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mining-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 2rem;
+  margin: 1rem 0;
+}
+
+.mining-chart-empty p {
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+.mining-chart-tooltip {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.mining-chart-tooltip .label {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.mining-chart-tooltip .value {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.1rem;
+  color: var(--accent-color);
+  font-weight: 700;
+}
+
+.mining-chart-tooltip .detail {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .mining-chart-container {
+    padding: 1rem;
+  }
+
+  .mining-chart-title {
+    font-size: 1.1rem;
+  }
+}
