@@ -4,7 +4,18 @@
       "Bash(npm install:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(npm run build:*)",
+      "Bash(node --check:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Bash(npm start)",
+      "Bash(git checkout:*)",
+      "Bash(Get-Process)",
+      "Bash(Select-String \"node\")",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)"
     ]
   }
 }

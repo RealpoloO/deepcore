@@ -10,6 +10,8 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Stats = lazy(() => import('./pages/Stats'));
 const Calendar = lazy(() => import('./pages/Calendar'));
 const Production = lazy(() => import('./pages/Production'));
+const ProductionPlanner = lazy(() => import('./pages/ProductionPlanner'));
+const IndustryConfig = lazy(() => import('./pages/IndustryConfig'));
 const Ware = lazy(() => import('./pages/Ware'));
 
 function LoadingFallback() {
@@ -67,13 +69,29 @@ function App() {
                   </PrivateRoute>
                 } 
               />
-              <Route 
-                path="/ware" 
+              <Route
+                path="/ware"
                 element={
                   <PrivateRoute>
                     <Ware />
                   </PrivateRoute>
-                } 
+                }
+              />
+              <Route
+                path="/production-planner"
+                element={
+                  <PrivateRoute>
+                    <ProductionPlanner />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/industry-config"
+                element={
+                  <PrivateRoute>
+                    <IndustryConfig />
+                  </PrivateRoute>
+                }
               />
             </Routes>
           </Suspense>

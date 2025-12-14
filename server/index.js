@@ -12,6 +12,7 @@ import miningRoutes from './routes/mining.js';
 import industryRoutes from './routes/industry.js';
 import discordRoutes from './routes/discord.js';
 import marketRoutes from './routes/market.js';
+import productionPlannerRoutes from './routes/productionPlanner.js';
 import { initDatabase } from './database/init.js';
 import logger from './utils/logger.js';
 import { generalLimiter } from './middleware/rateLimiter.js';
@@ -22,6 +23,7 @@ dotenv.config({ path: envFile });
 import jobAlertService from './services/jobAlerts.js';
 import marketService from './services/market.js';
 import sdeService from './services/sde.js';
+import blueprintService from './services/blueprintService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,6 +71,7 @@ app.use('/api/mining', miningRoutes);
 app.use('/api/industry', industryRoutes);
 app.use('/api/discord', discordRoutes);
 app.use('/api/market', marketRoutes);
+app.use('/api/production-planner', productionPlannerRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -79,13 +82,16 @@ app.get('/api/health', (req, res) => {
 async function startServer() {
   try {
     await initDatabase();
-    
+
     // Load SDE types into memory
     await sdeService.loadTypes();
-    
+
+    // Load blueprints into memory
+    await blueprintService.loadBlueprints();
+
     // Start job alert service
     jobAlertService.start();
-    
+
     // Start market price sync service
     marketService.start();
     

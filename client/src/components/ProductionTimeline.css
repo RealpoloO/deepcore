@@ -1,0 +1,142 @@
+.production-timeline {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: var(--spacing-lg);
+  margin-top: var(--spacing-lg);
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-lg);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 2px solid var(--border-primary);
+}
+
+.timeline-header h3 {
+  font-size: 1.3rem;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.timeline-summary {
+  display: flex;
+  gap: var(--spacing-lg);
+}
+
+.summary-item {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.summary-item strong {
+  color: var(--text-primary);
+}
+
+.timeline-categories {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.timeline-category {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.category-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.category-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.category-stats {
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+.category-stats .stat {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  padding: 2px 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+.category-bar-container {
+  width: 100%;
+  height: 32px;
+  background: var(--bg-secondary);
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+  position: relative;
+}
+
+.category-bar {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: var(--spacing-sm);
+  transition: width 0.5s ease;
+  position: relative;
+}
+
+.bar-label {
+  color: white;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.timeline-legend {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+}
+
+.legend-note {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0;
+  font-style: italic;
+}
+
+/* Animation pour les barres */
+@keyframes slideIn {
+  from {
+    width: 0;
+  }
+}
+
+.category-bar {
+  animation: slideIn 0.8s ease-out;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .timeline-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+  }
+
+  .category-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xs);
+  }
+
+  .category-stats {
+    flex-wrap: wrap;
+  }
+}

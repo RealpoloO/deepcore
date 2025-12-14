@@ -118,12 +118,26 @@ function NavBar() {
                 onMouseLeave={closeMenu}
               >
                 <div className="dropdown-menu-content">
-                  <NavLink 
-                    to="/production" 
+                  <NavLink
+                    to="/production"
                     className="dropdown-item"
                     onClick={() => setOpenDropdown(null)}
                   >
                     Job Count
+                  </NavLink>
+                  <NavLink
+                    to="/production-planner"
+                    className="dropdown-item"
+                    onClick={() => setOpenDropdown(null)}
+                  >
+                    Production Planner
+                  </NavLink>
+                  <NavLink
+                    to="/industry-config"
+                    className="dropdown-item"
+                    onClick={() => setOpenDropdown(null)}
+                  >
+                    Industry Config
                   </NavLink>
                 </div>
               </div>

@@ -36,6 +36,7 @@ async function loadTypes() {
         const typeData = {
           typeId: obj._key,
           name: obj.name.en,
+          groupId: obj.groupID || null,
           volume: obj.volume || 0,
           iconID: obj.iconID || null,
           published: obj.published !== false
@@ -67,20 +68,56 @@ function findTypeByName(name) {
 
   const nameLower = name.toLowerCase().trim();
   
-  // Recherche exacte
-  const typeId = nameLookup.get(nameLower);
-  if (typeId) {
-    return typeCache.get(typeId);
-  }
-
-  // Recherche approximative (contient le nom)
-  for (const [cachedName, cachedTypeId] of nameLookup.entries()) {
-    if (cachedName.includes(nameLower)) {
-      return typeCache.get(cachedTypeId);
+  // Recherche exacte - parcourir TOUS les types pour trouver toutes les correspondances
+  const matchingTypes = [];
+  for (const type of typeCache.values()) {
+    if (type.name.toLowerCase() === nameLower) {
+      matchingTypes.push(type);
     }
   }
 
-  return null;
+  // Si on a des correspondances exactes, choisir la meilleure
+  if (matchingTypes.length > 0) {
+    // Prioriser dans cet ordre:
+    // 1. Published ET pas un blueprint
+    // 2. Published
+    // 3. Pas un blueprint
+    // 4. N'importe lequel
+    
+    const publishedNonBlueprint = matchingTypes.find(t => 
+      t.published && !t.name.toLowerCase().includes('blueprint')
+    );
+    if (publishedNonBlueprint) return publishedNonBlueprint;
+    
+    const published = matchingTypes.find(t => t.published);
+    if (published) return published;
+    
+    const nonBlueprint = matchingTypes.find(t => 
+      !t.name.toLowerCase().includes('blueprint')
+    );
+    if (nonBlueprint) return nonBlueprint;
+    
+    return matchingTypes[0];
+  }
+
+  // Recherche approximative (contient le nom)
+  // Prioriser les items published qui ne sont PAS des blueprints
+  let bestMatch = null;
+  for (const type of typeCache.values()) {
+    if (type.name.toLowerCase().includes(nameLower)) {
+      // Priorité maximale: published + non-blueprint
+      if (type.published && !type.name.toLowerCase().includes('blueprint')) {
+        return type;
+      }
+      
+      // Garder le meilleur match en backup
+      if (!bestMatch || (type.published && !bestMatch.published)) {
+        bestMatch = type;
+      }
+    }
+  }
+  
+  return bestMatch;
 }
 
 /**
