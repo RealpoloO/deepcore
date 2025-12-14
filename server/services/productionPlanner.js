@@ -1,75 +1,47 @@
+/**
+ * ============================================================================
+ * PRODUCTION PLANNER - ARCHITECTURE SIMPLIFIÉE by popey
+ * ============================================================================
+ * 
+ * LOGIQUE SIMPLE EN 4 PHASES:
+ * 
+ * 1. BOM CALCULATION
+ *    Pour chaque ligne end product (ex: Archon ME 8 TE 16)
+ *    → Calculer récursivement les matériaux nécessaires
+ *    → Résultat: Pool de matériaux à produire (ex: 5000 Carbon Fiber)
+ * 
+ * 2. JOB PLANNING
+ *    Pour chaque matériau du pool:
+ *    - Vérifier blacklist (si blacklist → acheter)
+ *    - Calculer runs nécessaires (ex: 5000 ÷ 10 = 500 runs)
+ *    - Splitter selon config (500 runs → 20 jobs de 25 runs)
+ * 
+ * 3. MATERIAL CALCULATION
+ *    Pour chaque job créé
+ *    → Calculer les matériaux de base nécessaires
+ * 
+ * 4. FORMATTING & DISPLAY
+ *    → Organiser par catégories
+ *    → Calculer timelines
+ *    → Retourner le plan complet
+ */
+
 import blueprintService from './blueprintService.js';
 import sde from './sde.js';
 import productionCategories from './productionCategories.js';
 import logger from '../utils/logger.js';
 
 // ============================================
-// MEMOIZATION CACHE
+// CONSTANTES
 // ============================================
-class ProductionCache {
-  constructor(ttlMs = 300000) { // 5 minutes TTL par défaut
-    this.cache = new Map();
-    this.ttl = ttlMs;
-    this.maxSize = 1000; // Limite de 1000 entrées
-  }
-
-  generateKey(typeID, quantity, stockValue, blacklistHash) {
-    return `${typeID}:${quantity}:${stockValue}:${blacklistHash}`;
-  }
-
-  hashBlacklist(blacklist) {
-    return JSON.stringify(blacklist);
-  }
-
-  get(key) {
-    const entry = this.cache.get(key);
-    if (!entry) return null;
-
-    const now = Date.now();
-    if (now - entry.timestamp > this.ttl) {
-      this.cache.delete(key);
-      return null;
-    }
-
-    return entry.data;
-  }
-
-  set(key, data) {
-    // LRU: si trop d'entrées, supprimer les plus anciennes
-    if (this.cache.size >= this.maxSize) {
-      const oldestKey = this.cache.keys().next().value;
-      this.cache.delete(oldestKey);
-    }
-
-    this.cache.set(key, {
-      data: data,
-      timestamp: Date.now()
-    });
-  }
-
-  clear() {
-    this.cache.clear();
-  }
-
-  getStats() {
-    return {
-      size: this.cache.size,
-      maxSize: this.maxSize,
-      ttl: this.ttl
-    };
-  }
-}
-
-const productionCache = new ProductionCache();
-
-// ============================================
-// INPUT VALIDATION
-// ============================================
-const MAX_QUANTITY = 1_000_000_000; // 1 milliard max
+const MAX_QUANTITY = 1_000_000_000;
 const MAX_DEPTH = 20;
 const MAX_STOCK_LINES = 10000;
 const MAX_ITEM_NAME_LENGTH = 200;
 
+// ============================================
+// VALIDATION
+// ============================================
 function validateQuantity(quantity, fieldName = 'quantity') {
   if (typeof quantity !== 'number' || !Number.isFinite(quantity)) {
     throw new Error(`${fieldName} must be a valid number`);
@@ -93,8 +65,6 @@ function sanitizeItemName(name) {
 
 /**
  * Parse le stock de l'utilisateur depuis le format texte
- * @param {string} stockText - Texte du stock (format: "Item: Quantity")
- * @returns {Object} { stock: Map<number, number>, errors: Array }
  */
 async function parseStock(stockText) {
   const stock = new Map();
@@ -111,7 +81,6 @@ async function parseStock(stockText) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // Format: "Item Name\tQuantity" (tabulation) ou "Item Name  Quantity" (espaces)
     const match = trimmed.match(/^(.+?)\s+(\d+)$/);
     if (!match) {
       errors.push({
@@ -126,7 +95,6 @@ async function parseStock(stockText) {
       const itemName = sanitizeItemName(match[1]);
       const quantity = validateQuantity(parseInt(match[2], 10), 'stock quantity');
 
-      // Trouver le typeID de l'item
       const type = sde.findTypeByName(itemName);
       if (type) {
         stock.set(type.typeId, (stock.get(type.typeId) || 0) + quantity);
@@ -151,15 +119,12 @@ async function parseStock(stockText) {
 
 /**
  * Vérifie si un item est dans la blacklist
- * @param {number} typeID - L'ID du type
- * @param {Object} blacklist - Configuration de la blacklist
- * @returns {boolean}
  */
 function isBlacklisted(typeID, blacklist) {
   const type = sde.getTypeById(typeID);
   if (!type) return false;
 
-  // Vérifier blacklist par catégories (via groupID)
+  // Vérifier blacklist par catégories
   if (productionCategories.isBlacklistedByCategory(type.groupId, blacklist)) {
     return true;
   }
@@ -180,312 +145,273 @@ function isBlacklisted(typeID, blacklist) {
   return false;
 }
 
+// ============================================
+// PHASE 1: BOM CALCULATION
+// ============================================
 
 /**
- * Calcule récursivement l'arbre de production en créant des JobDescriptors (SANS materials)
- * Les matériaux seront calculés APRÈS le splitting pour garantir la précision
- *
- * @param {number} productTypeID - L'ID du produit à fabriquer
+ * Calcule récursivement la BOM (Bill of Materials) pour un produit
+ * Accumule les matériaux à produire dans un pool global
+ * 
+ * @param {number} productTypeID - ID du produit
  * @param {number} requiredQuantity - Quantité requise
- * @param {Map<number, number>} stock - Stock disponible (lecture seule dans cette phase)
- * @param {Object} blacklist - Configuration de blacklist
- * @param {Map<string, Object>} materialRequests - Accumulation des demandes de matériaux (pour pooling)
- * @param {Array} jobDescriptors - Accumulation des JobDescriptors (SANS materials[])
- * @param {Array} errors - Accumulation des erreurs
- * @param {number} depth - Profondeur actuelle (pour éviter les boucles infinies)
- * @param {number} me - Material Efficiency (uniquement pour depth=0, sinon toujours 10)
- * @param {number} te - Time Efficiency (uniquement pour depth=0, sinon toujours 20)
- * @returns {void}
+ * @param {Map} materialPool - Pool global de matériaux à produire
+ * @param {Map} rawMaterialPool - Pool de matériaux de base (pas de blueprint)
+ * @param {Map} stock - Stock disponible
+ * @param {Object} blacklist - Configuration blacklist
+ * @param {number} depth - Profondeur actuelle
+ * @param {number} me - Material Efficiency (depth=0: user input, depth>0: 10)
+ * @param {number} te - Time Efficiency (depth=0: user input, depth>0: 20)
  */
-function calculateProductionTree(
+function calculateBOM(
   productTypeID,
   requiredQuantity,
+  materialPool,
+  rawMaterialPool,
   stock,
   blacklist,
-  materialRequests,
-  jobDescriptors,
-  errors,
   depth = 0,
   me = 10,
-  te = 20,
-  endProductID = null  // ✅ ID du end product auquel appartient ce composant
+  te = 20
 ) {
-  // Validation
+  // Protection contre récursion infinie
   if (depth > MAX_DEPTH) {
-    logger.warn(`Max depth (${MAX_DEPTH}) reached for typeID ${productTypeID}`);
+    logger.warn(`Max depth ${MAX_DEPTH} atteint pour typeID ${productTypeID}`);
     return;
   }
 
+  // Validation
   try {
-    validateQuantity(requiredQuantity, 'required quantity');
+    requiredQuantity = validateQuantity(requiredQuantity, 'required quantity');
   } catch (err) {
-    logger.error(`Invalid quantity for typeID ${productTypeID}: ${err.message}`);
+    logger.error(`Quantité invalide pour typeID ${productTypeID}: ${err.message}`);
     return;
   }
 
-  // TODO: Cache sera réactivé dans Phase 2 avec nouvelle stratégie (sans stock dans clé)
-
-  // Vérifier le stock disponible (lecture seule pour l'instant)
+  // Vérifier le stock disponible
   const availableStock = stock.get(productTypeID) || 0;
   let quantityToProduce = requiredQuantity - availableStock;
 
   if (quantityToProduce <= 0) {
-    // On a assez en stock - pas besoin de produire
-    // Note: La consommation de stock sera gérée APRÈS le splitting
+    // Assez en stock, consommer
+    stock.set(productTypeID, availableStock - requiredQuantity);
     return;
   }
 
-  // Note: On NE consomme PAS le stock ici
-  // Le stock sera consommé APRÈS le splitting pour refléter les jobs finaux
+  // Consommer le stock disponible
+  if (availableStock > 0) {
+    stock.set(productTypeID, 0);
+  }
 
-  // Vérifier si l'item est blacklisté (on préfère l'acheter)
+  // Vérifier blacklist
   if (isBlacklisted(productTypeID, blacklist)) {
-    // Ajouter aux MaterialRequests pour pooling
-    const key = `${productTypeID}_${depth}`;
-
-    if (!materialRequests.has(key)) {
-      materialRequests.set(key, {
-        typeID: productTypeID,
-        baseQuantityPerRun: 1,  // Pour items blacklistés, quantité = quantité
-        depth: depth,
-        totalRuns: 0,
-        me: 0  // Pas de ME bonus pour items blacklistés
-      });
-    }
-
-    const request = materialRequests.get(key);
-    request.totalRuns += quantityToProduce;  // Accumuler la quantité
-
+    // Acheter directement
+    rawMaterialPool.set(productTypeID, (rawMaterialPool.get(productTypeID) || 0) + quantityToProduce);
     return;
   }
 
-  // Trouver le blueprint pour cet item
+  // Chercher le blueprint
   const blueprint = blueprintService.getBlueprintByProduct(productTypeID);
 
   if (!blueprint) {
-    // AUCUN BLUEPRINT = ERREUR CRITIQUE
-    // Les items sans blueprint (raw materials comme Tritanium) ne doivent JAMAIS
-    // être dans la chaîne de production. Ils doivent être achetés, pas produits.
-
-    const type = sde.getTypeById(productTypeID);
-    const productName = type?.name || `Unknown (${productTypeID})`;
-
-    // Si c'est un item de profondeur 0 (demandé directement par l'utilisateur)
-    if (depth === 0) {
-      errors.push({
-        type: 'NO_BLUEPRINT',
-        productTypeID: productTypeID,
-        productName: productName,
-        error: `❌ "${productName}" ne peut pas être produit (aucun blueprint disponible). Seuls les items avec blueprint peuvent être ajoutés aux jobs de production.`,
-        critical: true
-      });
-      return;
-    }
-
-    // Si c'est un composant intermédiaire (depth > 0), c'est un matériau de base
-    // On l'ajoute aux MaterialRequests pour pooling
-    const key = `${productTypeID}_${depth}`;
-
-    if (!materialRequests.has(key)) {
-      materialRequests.set(key, {
-        typeID: productTypeID,
-        baseQuantityPerRun: 1,  // Pour raw materials, quantité = quantité
-        depth: depth,
-        totalRuns: 0,
-        me: 0  // Pas de ME bonus pour raw materials
-      });
-    }
-
-    const request = materialRequests.get(key);
-    request.totalRuns += quantityToProduce;  // Accumuler la quantité
-
+    // Pas de blueprint = matériau de base (Tritanium, etc.)
+    rawMaterialPool.set(productTypeID, (rawMaterialPool.get(productTypeID) || 0) + quantityToProduce);
     return;
   }
 
-  // Calculer combien de runs sont nécessaires
+  // Calculer les runs nécessaires
   const activity = blueprint.activities?.manufacturing || blueprint.activities?.reaction;
+  if (!activity || !activity.products || activity.products.length === 0) {
+    logger.warn(`Blueprint invalide pour typeID ${productTypeID}`);
+    rawMaterialPool.set(productTypeID, (rawMaterialPool.get(productTypeID) || 0) + quantityToProduce);
+    return;
+  }
+
   const productsPerRun = activity.products[0]?.quantity || 1;
   const runsNeeded = Math.ceil(quantityToProduce / productsPerRun);
 
-  // Utiliser ME/TE spécifiques pour le end product (depth=0)
-  // Pour les composants (depth>0), toujours utiliser ME=10 et TE=20 (BPO optimaux)
-  const effectiveME = depth === 0 ? me : 10;
-  const effectiveTE = depth === 0 ? te : 20;
-
-  // Calculer le temps PAR RUN (pas le temps total - ça sera fait après splitting)
-  const productionTimePerRun = blueprintService.calculateProductionTime(blueprint, 1, effectiveTE);
-
-  // Créer JobDescriptor SANS materials (seront calculés APRÈS splitting)
-  const activityType = blueprintService.getActivityType(blueprint);
-  const type = sde.getTypeById(productTypeID);
-
-  const jobDescriptor = {
-    blueprintTypeID: blueprint.blueprintTypeID,
-    productTypeID: productTypeID,
-    productName: type?.name || `Unknown (${productTypeID})`,
-    runs: runsNeeded,
-    productionTimePerRun: productionTimePerRun,
-    activityType: activityType,
-    depth: depth,
-    isEndProduct: depth === 0,
-    me: effectiveME,  // Stocké pour calcul ultérieur
-    te: effectiveTE,  // Stocké pour calcul ultérieur
-    endProductID: endProductID  // ✅ Marquer le end product auquel appartient ce composant
-  };
-
-  jobDescriptors.push(jobDescriptor);
-
-  // Enregistrer les MaterialRequests pour pooling (au lieu de calculer materials maintenant)
-  for (const material of activity.materials) {
-    // Clé unique: typeID + depth (pour grouper par profondeur)
-    const key = `${material.typeID}_${depth + 1}`;
-
-    if (!materialRequests.has(key)) {
-      materialRequests.set(key, {
-        typeID: material.typeID,
-        baseQuantityPerRun: material.quantity,
-        depth: depth + 1,
+  // Ajouter au pool de matériaux à produire (sauf si depth=0, c'est l'end product)
+  if (depth > 0) {
+    const key = `${productTypeID}_${me}_${te}`;
+    
+    if (!materialPool.has(key)) {
+      materialPool.set(key, {
+        typeID: productTypeID,
+        me: me,
+        te: te,
         totalRuns: 0,
-        me: effectiveME
+        productsPerRun: productsPerRun
       });
     }
-
-    // Accumuler les runs
-    const request = materialRequests.get(key);
-    request.totalRuns += runsNeeded;
+    
+    const entry = materialPool.get(key);
+    entry.totalRuns += runsNeeded;
   }
 
   // Calculer récursivement les matériaux nécessaires
-  // Les composants utilisent TOUJOURS ME=10 et TE=20 (BPO optimaux)
-  for (const material of activity.materials) {
-    const quantityNeeded = material.quantity * runsNeeded;
+  // Pour les composants (depth > 0), utiliser toujours ME=10 et TE=20
+  const componentME = depth === 0 ? me : 10;
+  const componentTE = depth === 0 ? te : 20;
 
-    calculateProductionTree(
+  for (const material of activity.materials) {
+    // Calculer quantité avec ME bonus
+    const activityType = blueprintService.getActivityType(blueprint);
+    const meBonus = activityType === 'reaction' ? 0 : (componentME / 100);
+    const baseQuantity = material.quantity * runsNeeded;
+    const quantityWithME = Math.ceil(baseQuantity * (1 - meBonus));
+
+    calculateBOM(
       material.typeID,
-      quantityNeeded,
+      quantityWithME,
+      materialPool,
+      rawMaterialPool,
       stock,
       blacklist,
-      materialRequests,  // Passe materialRequests
-      jobDescriptors,    // Passe jobDescriptors
-      errors,
       depth + 1,
-      10,  // ME toujours 10 pour les composants
-      20,  // TE toujours 20 pour les composants
-      endProductID  // ✅ Propager le endProductID à travers l'arbre
+      10,  // Composants toujours ME 10
+      20   // Composants toujours TE 20
     );
   }
+}
 
-  // Note: Stock sera consommé APRÈS splitting (pas ici)
-  // Note: Cache sera réactivé dans Phase 2
+// ============================================
+// PHASE 2: JOB PLANNING
+// ============================================
+
+/**
+ * Split les runs en jobs selon la configuration
+ * 
+ * @param {number} totalRuns - Total de runs à produire
+ * @param {number} productionTimePerRun - Temps par run (secondes)
+ * @param {number} slotsAvailable - Nombre de slots disponibles
+ * @param {number} dontSplitShorterThan - Ne pas splitter si job < X jours
+ * @returns {Array} Liste de runs par job
+ */
+function splitRuns(totalRuns, productionTimePerRun, slotsAvailable, dontSplitShorterThan) {
+  const totalTimeDays = (totalRuns * productionTimePerRun) / 86400;
+
+  // Si un seul slot ou job trop court, ne pas splitter
+  if (slotsAvailable <= 1 || totalTimeDays <= dontSplitShorterThan) {
+    return [totalRuns];
+  }
+
+  // Calculer le nombre optimal de jobs
+  let numJobs = 1;
+  
+  for (let jobs = 2; jobs <= Math.min(slotsAvailable, totalRuns); jobs++) {
+    const timePerJob = totalTimeDays / jobs;
+    
+    if (timePerJob > dontSplitShorterThan) {
+      numJobs = jobs;
+    } else {
+      break;
+    }
+  }
+
+  // Répartir les runs
+  const runsPerJob = Math.floor(totalRuns / numJobs);
+  const remainder = totalRuns % numJobs;
+
+  const runsList = [];
+  for (let i = 0; i < numJobs; i++) {
+    const runs = runsPerJob + (i < remainder ? 1 : 0);
+    runsList.push(runs);
+  }
+
+  return runsList;
 }
 
 /**
- * Résout les matériaux pour les jobs APRÈS splitting
- * C'est ici que Math.ceil() est appliqué, sur les runs FINAUX
- *
- * @param {Array} jobDescriptors - Jobs avec runs mais sans materials
- * @returns {Array} Jobs complets avec materials calculés
+ * Crée les jobs à partir du pool de matériaux
  */
-function resolveMaterialsForJobs(jobDescriptors) {
-  const completeJobs = [];
+function createJobsFromPool(materialPool, config) {
+  const jobs = [];
 
-  for (const jobDesc of jobDescriptors) {
-    const blueprint = blueprintService.getBlueprintById(jobDesc.blueprintTypeID);
+  for (const [key, entry] of materialPool) {
+    const { typeID, me, te, totalRuns, productsPerRun } = entry;
+
+    const type = sde.getTypeById(typeID);
+    const blueprint = blueprintService.getBlueprintByProduct(typeID);
 
     if (!blueprint) {
-      logger.error(`Blueprint not found for blueprintTypeID ${jobDesc.blueprintTypeID}`);
+      logger.warn(`Blueprint introuvable pour typeID ${typeID}`);
       continue;
     }
 
-    // ✅ CALCUL DES MATERIALS ICI - APRÈS splitting!
-    const materials = blueprintService.calculateMaterials(
-      blueprint,
-      jobDesc.runs,  // ✅ Runs FINAUX (27 ou 28, pas 55!)
-      jobDesc.me
+    const activityType = blueprintService.getActivityType(blueprint);
+    const productionTimePerRun = blueprintService.calculateProductionTime(blueprint, 1, te);
+
+    // Déterminer les slots disponibles
+    const slotsAvailable = activityType === 'reaction' 
+      ? config.reactionSlots 
+      : config.manufacturingSlots;
+
+    // Splitter les runs
+    const runsList = splitRuns(
+      totalRuns,
+      productionTimePerRun,
+      slotsAvailable,
+      config.dontSplitShorterThan
     );
 
-    // Calculer temps total basé sur productionTimePerRun
-    const totalProductionTime = jobDesc.productionTimePerRun * jobDesc.runs;
+    // Créer un job pour chaque split
+    for (let i = 0; i < runsList.length; i++) {
+      const runs = runsList[i];
+      const totalTime = runs * productionTimePerRun;
 
-    // Calculer quantité produite
-    const activity = blueprint.activities?.manufacturing || blueprint.activities?.reaction;
-    const productsPerRun = activity.products[0]?.quantity || 1;
-    const quantityProduced = jobDesc.runs * productsPerRun;
-
-    const completeJob = {
-      ...jobDesc,
-      materials: materials,  // ✅ Materials calculés pour runs finaux!
-      productionTime: totalProductionTime,
-      productionTimeDays: totalProductionTime / 86400,
-      quantityProduced: quantityProduced,
-      singleRunDurationDays: jobDesc.productionTimePerRun / 86400
-    };
-
-    completeJobs.push(completeJob);
+      jobs.push({
+        blueprintTypeID: blueprint.blueprintTypeID,
+        productTypeID: typeID,
+        productName: type?.name || `Unknown (${typeID})`,
+        runs: runs,
+        me: me,
+        te: te,
+        activityType: activityType,
+        productionTimePerRun: productionTimePerRun,
+        productionTime: totalTime,
+        productionTimeDays: totalTime / 86400,
+        quantityProduced: runs * productsPerRun,
+        splitIndex: runsList.length > 1 ? i + 1 : undefined,
+        splitCount: runsList.length > 1 ? runsList.length : undefined,
+        materials: []  // Sera rempli en Phase 3
+      });
+    }
   }
 
-  return completeJobs;
+  return jobs;
 }
 
+// ============================================
+// PHASE 3: MATERIAL CALCULATION
+// ============================================
+
 /**
- * Pool les MaterialRequests pour minimiser excess stock
- *
- * Job A needs 10.3 units → pool avec Job B (10.3) = 20.6 → ceil(20.6) = 21
- * Au lieu de: ceil(10.3) + ceil(10.3) = 11 + 11 = 22
- *
- * @param {Map} materialRequests - Map<key, MaterialRequest>
- * @returns {Map} Materials poolés avec rounding minimisé
+ * Calcule les matériaux nécessaires pour chaque job
  */
-function poolMaterialRequests(materialRequests) {
-  const pooled = new Map();
+function calculateJobMaterials(jobs) {
+  for (const job of jobs) {
+    const blueprint = blueprintService.getBlueprintById(job.blueprintTypeID);
 
-  // ✅ DÉTERMINISME: Convertir en array et trier par clé pour ordre stable
-  const sortedRequests = Array.from(materialRequests.entries()).sort((a, b) => {
-    const [keyA, requestA] = a;
-    const [keyB, requestB] = b;
-
-    // Tri primaire par typeID
-    if (requestA.typeID !== requestB.typeID) {
-      return requestA.typeID - requestB.typeID;
+    if (!blueprint) {
+      logger.error(`Blueprint introuvable: ${job.blueprintTypeID}`);
+      continue;
     }
 
-    // Tri secondaire par depth
-    if (requestA.depth !== requestB.depth) {
-      return requestA.depth - requestB.depth;
-    }
-
-    // Tri tertiaire par clé (pour garantir l'ordre)
-    return keyA.localeCompare(keyB);
-  });
-
-  for (const [key, request] of sortedRequests) {
-    const meBonus = request.me / 100;
-
-    // ✅ Appliquer ME bonus UNE FOIS sur le total poolé
-    const totalBeforeRounding = request.baseQuantityPerRun *
-                                (1 - meBonus) *
-                                request.totalRuns;
-
-    // ✅ Arrondir UNE FOIS pour tout le pool
-    const totalAfterRounding = Math.ceil(totalBeforeRounding);
-
-    if (!pooled.has(request.typeID)) {
-      pooled.set(request.typeID, 0);
-    }
-
-    const current = pooled.get(request.typeID);
-    pooled.set(request.typeID, current + totalAfterRounding);
+    // Calculer les matériaux avec ME
+    job.materials = blueprintService.calculateMaterials(blueprint, job.runs, job.me);
   }
 
-  return pooled;
+  return jobs;
 }
 
+// ============================================
+// PHASE 4: FORMATTING & DISPLAY
+// ============================================
+
 /**
- * Organise les jobs par catégories et étapes
- * @param {Array} jobs - Liste des jobs
- * @returns {Object} Jobs organisés par catégories
+ * Organise les jobs par catégories
  */
-function organizeJobs(jobs) {
+function organizeJobsByCategory(jobs) {
   const organized = {
     fuel_blocks: [],
     intermediate_composite_reactions: [],
@@ -495,309 +421,145 @@ function organizeJobs(jobs) {
     construction_components: [],
     advanced_components: [],
     capital_components: [],
-    others: [],
-    end_product_jobs: []
+    others: []
   };
 
   for (const job of jobs) {
-    // Les end products vont toujours dans end_product_jobs
-    if (job.isEndProduct) {
-      organized.end_product_jobs.push(job);
-      continue;
-    }
-
     const type = sde.getTypeById(job.productTypeID);
     if (!type) {
-      organized.end_product_jobs.push(job);
+      organized.others.push(job);
       continue;
     }
 
-    // Déterminer la catégorie basée sur le groupID
     const category = productionCategories.getCategoryByGroupID(type.groupId);
 
     if (organized[category]) {
       organized[category].push(job);
     } else {
-      organized.end_product_jobs.push(job);
+      organized.others.push(job);
     }
   }
 
-  // ✅ DÉTERMINISME: Trier chaque catégorie par productTypeID pour garantir un ordre stable
+  // Trier chaque catégorie par nom de produit
   for (const category in organized) {
-    organized[category].sort((a, b) => {
-      // Tri primaire par productTypeID
-      if (a.productTypeID !== b.productTypeID) {
-        return a.productTypeID - b.productTypeID;
-      }
-      // Tri secondaire par depth (end products en premier si égalité)
-      if (a.depth !== b.depth) {
-        return a.depth - b.depth;
-      }
-      // Tri tertiaire par ME
-      if ((a.me || 0) !== (b.me || 0)) {
-        return (a.me || 0) - (b.me || 0);
-      }
-      // Tri quaternaire par TE
-      return (a.te || 0) - (b.te || 0);
-    });
+    organized[category].sort((a, b) => a.productName.localeCompare(b.productName));
   }
 
   return organized;
 }
 
 /**
- * Optimise les JobDescriptors selon les slots disponibles et la règle de split
- * Regroupe les JobDescriptors identiques et les split UNIQUEMENT si un job unique monopolise trop de temps
- *
- * IMPORTANT: Cette fonction travaille avec JobDescriptors (SANS materials)
- * Les materials seront calculés APRÈS par resolveMaterialsForJobs()
- *
- * @param {Array} jobDescriptors - Liste des JobDescriptors (SANS materials)
- * @param {Object} config - Configuration (slots, dontSplitShorterThan)
- * @param {string} activityType - 'reaction' ou 'manufacturing'
- * @returns {Object} { jobDescriptors: Array, totalTimeDays: number, slotsUsed: number }
+ * Calcule les timelines pour chaque catégorie
  */
-function optimizeJobsForCategory(jobDescriptors, config, activityType, categoryName = '') {
-  const slotsAvailable = activityType === 'reaction'
-    ? config.reactionSlots
-    : config.manufacturingSlots;
+function calculateTimelines(organizedJobs, config) {
+  const categoryTimings = {};
 
-  // ✅ SKIP CONSOLIDATION: Les jobDescriptors ont déjà été consolidés globalement
-  // On passe directement à l'étape de calcul des durées
-  const consolidatedDescriptors = [];
+  for (const category in organizedJobs) {
+    const categoryJobs = organizedJobs[category];
+    if (categoryJobs.length === 0) continue;
 
-  for (const jobDesc of jobDescriptors) {
-    // Calculer temps total basé sur productionTimePerRun
-    const totalTime = jobDesc.productionTimePerRun * jobDesc.runs;
-    const totalDurationDays = totalTime / 86400;
+    // Séparer reactions et manufacturing
+    const reactionJobs = categoryJobs.filter(j => j.activityType === 'reaction');
+    const mfgJobs = categoryJobs.filter(j => j.activityType === 'manufacturing');
 
-    consolidatedDescriptors.push({
-      ...jobDesc,
-      productionTimeDays: totalDurationDays,  // Pour tri et allocation
-      // PAS de materials[] ici - sera calculé après splitting
-    });
+    // Simuler l'exécution parallèle
+    const reactionTime = simulateParallelExecution(reactionJobs, config.reactionSlots);
+    const mfgTime = simulateParallelExecution(mfgJobs, config.manufacturingSlots);
+
+    categoryTimings[category] = {
+      totalTimeDays: Math.max(reactionTime, mfgTime),
+      reactionTimeDays: reactionTime,
+      manufacturingTimeDays: mfgTime,
+      reactionJobs: reactionJobs.length,
+      manufacturingJobs: mfgJobs.length,
+      totalJobs: categoryJobs.length
+    };
   }
 
-  // ✅ DÉTERMINISME: Trier de manière stable pour garantir un ordre déterministe
-  consolidatedDescriptors.sort((a, b) => {
-    // Tri primaire par productTypeID
-    if (a.productTypeID !== b.productTypeID) {
-      return a.productTypeID - b.productTypeID;
-    }
-    // Tri secondaire par ME (si différent)
-    if ((a.me || 0) !== (b.me || 0)) {
-      return (a.me || 0) - (b.me || 0);
-    }
-    // Tri tertiaire par TE (si différent)
-    return (a.te || 0) - (b.te || 0);
-  });
-
-  // VÉRIFICATION : Si plus de produits différents que de slots disponibles → ERREUR
-  const uniqueProductCount = consolidatedDescriptors.length;
-  if (uniqueProductCount > slotsAvailable) {
-    const categoryName = activityType === 'reaction' ? 'REACTIONS' : 'MANUFACTURING';
-    throw new Error(
-      `❌ Impossible : ${uniqueProductCount} produits différents mais seulement ${slotsAvailable} slots disponibles en ${categoryName}.\n` +
-      `Il faut au minimum ${uniqueProductCount} slots pour produire tous ces produits en parallèle.`
-    );
-  }
-
-  // Étape 3 : Déterminer combien de jobs (splits) on peut créer au total
-  // On a slotsAvailable slots max = slotsAvailable jobs max
-  // Chaque produit a droit à au moins 1 job
-  const baseJobsCount = uniqueProductCount;
-  let bonusJobsAvailable = slotsAvailable - baseJobsCount; // Jobs supplémentaires qu'on peut créer via split
-
-  // ✅ DÉTERMINISME: Trier par temps décroissant PUIS par productTypeID pour ordre stable
-  const sortedDescriptors = [...consolidatedDescriptors].sort((a, b) => {
-    // Tri primaire par productionTimeDays (décroissant)
-    if (b.productionTimeDays !== a.productionTimeDays) {
-      return b.productionTimeDays - a.productionTimeDays;
-    }
-    // Tri secondaire par productTypeID pour stabilité
-    if (a.productTypeID !== b.productTypeID) {
-      return a.productTypeID - b.productTypeID;
-    }
-    // Tri tertiaire par ME
-    if ((a.me || 0) !== (b.me || 0)) {
-      return (a.me || 0) - (b.me || 0);
-    }
-    // Tri quaternaire par TE
-    return (a.te || 0) - (b.te || 0);
-  });
-
-  // Initialiser : 1 job par produit
-  const jobsAllocation = new Map();
-  for (const jobDesc of sortedDescriptors) {
-    const key = `${jobDesc.productTypeID}_${jobDesc.me || 0}_${jobDesc.te || 0}`;
-    jobsAllocation.set(key, {
-      allocatedJobs: 1,
-      productionTimeDays: jobDesc.productionTimeDays
-    });
-  }
-
-  // Distribuer les jobs bonus UN PAR UN aux jobs les plus longs qui peuvent en bénéficier
-  while (bonusJobsAvailable > 0) {
-    // Trouver le job le plus long qui peut encore accepter un split (runs > allocatedJobs)
-    let bestJobDesc = null;
-    let bestTime = 0;
-
-    for (const jobDesc of sortedDescriptors) {
-      // NE JAMAIS splitter les end products (produits finaux demandés par l'utilisateur)
-      if (jobDesc.isEndProduct) continue;
-
-      const key = `${jobDesc.productTypeID}_${jobDesc.me || 0}_${jobDesc.te || 0}`;
-      const allocation = jobsAllocation.get(key);
-
-      // Calculer le temps d'un job SI on le split davantage
-      const timePerJobIfSplit = jobDesc.productionTimeDays / (allocation.allocatedJobs + 1);
-
-      // RÈGLE: Ne splitter que si le temps APRÈS split reste > dontSplitShorterThan
-      // ET qu'on a encore des runs à splitter
-      if (jobDesc.runs > allocation.allocatedJobs &&
-          timePerJobIfSplit > config.dontSplitShorterThan) {
-
-        // Prendre le job dont le temps par split actuel est le plus élevé
-        const currentTimePerJob = jobDesc.productionTimeDays / allocation.allocatedJobs;
-
-        if (currentTimePerJob > bestTime) {
-          bestTime = currentTimePerJob;
-          bestJobDesc = jobDesc;
-        }
-      }
-    }
-
-    // Si aucun job ne peut accepter de split supplémentaire, stop
-    if (!bestJobDesc) break;
-
-    // Allouer un job bonus au bestJobDesc
-    const key = `${bestJobDesc.productTypeID}_${bestJobDesc.me || 0}_${bestJobDesc.te || 0}`;
-    jobsAllocation.get(key).allocatedJobs++;
-    bonusJobsAvailable--;
-  }
-  
-  // VÉRIFICATION FINALE : total des jobs ne doit JAMAIS dépasser slotsAvailable
-  let totalJobsCount = 0;
-  for (const allocation of jobsAllocation.values()) {
-    totalJobsCount += allocation.allocatedJobs;
-  }
-  
-  if (totalJobsCount > slotsAvailable) {
-    throw new Error(
-      `❌ BUG : Allocation a créé ${totalJobsCount} jobs mais seulement ${slotsAvailable} slots disponibles !`
-    );
-  }
-
-  // Étape 4 : Splitter les JobDescriptors selon le nombre de jobs alloués
-  const splitDescriptors = [];
-
-  for (const jobDesc of consolidatedDescriptors) {
-    const key = `${jobDesc.productTypeID}_${jobDesc.me || 0}_${jobDesc.te || 0}`;
-    const allocation = jobsAllocation.get(key);
-    const allocatedJobs = allocation.allocatedJobs;
-
-    // Splitter si on a alloué plus d'1 job pour ce produit
-    const shouldSplit = allocatedJobs > 1;
-
-    if (shouldSplit) {
-      const runsPerJob = Math.ceil(jobDesc.runs / allocatedJobs);
-
-      let remainingRuns = jobDesc.runs;
-      let splitIndex = 0;
-
-      while (remainingRuns > 0) {
-        const splitRuns = Math.min(runsPerJob, remainingRuns);
-
-        splitDescriptors.push({
-          ...jobDesc,
-          runs: splitRuns,  // ✅ SEULEMENT runs
-          splitFrom: jobDesc.runs,
-          splitIndex: ++splitIndex,
-          splitCount: allocatedJobs
-          // PAS de materials[] ici!
-        });
-
-        remainingRuns -= splitRuns;
-      }
-    } else {
-      // Garder le descriptor consolidé tel quel
-      splitDescriptors.push(jobDesc);
-    }
-  }
-
-  // Étape 5 : Simuler l'exécution avec les slots disponibles pour calculer timings
-  let totalTimeDays = 0;
-  if (splitDescriptors.length > 0) {
-    // Calculer productionTimeDays pour chaque descriptor
-    for (const jobDesc of splitDescriptors) {
-      jobDesc.productionTimeDays = (jobDesc.productionTimePerRun * jobDesc.runs) / 86400;
-    }
-
-    const jobQueue = [...splitDescriptors].sort((a, b) => b.productionTimeDays - a.productionTimeDays);
-    const slotTimelines = Array(slotsAvailable).fill(0);
-
-    for (const jobDesc of jobQueue) {
-      // Trouver le slot qui se libère le plus tôt
-      const earliestSlotIndex = slotTimelines.indexOf(Math.min(...slotTimelines));
-      const startTime = slotTimelines[earliestSlotIndex];
-
-      // Ajouter ce job au slot
-      slotTimelines[earliestSlotIndex] = startTime + jobDesc.productionTimeDays;
-
-      // Mettre à jour le timing du descriptor
-      jobDesc.startTime = startTime;
-      jobDesc.endTime = startTime + jobDesc.productionTimeDays;
-      jobDesc.slotUsed = earliestSlotIndex + 1;
-    }
-
-    // Le temps total est le max des timelines
-    totalTimeDays = Math.max(...slotTimelines);
-  }
-
-  return {
-    jobDescriptors: splitDescriptors,  // ✅ Retourne jobDescriptors au lieu de jobs
-    totalTimeDays: totalTimeDays,
-    slotsUsed: Math.min(splitDescriptors.length, slotsAvailable)
-  };
+  return categoryTimings;
 }
 
 /**
+ * Simule l'exécution parallèle des jobs avec N slots
+ */
+function simulateParallelExecution(jobs, slotsAvailable) {
+  if (jobs.length === 0 || slotsAvailable === 0) return 0;
+
+  // Trier par temps décroissant
+  const sortedJobs = [...jobs].sort((a, b) => b.productionTimeDays - a.productionTimeDays);
+
+  // Créer les timelines des slots
+  const slotTimelines = Array(slotsAvailable).fill(0);
+
+  for (const job of sortedJobs) {
+    // Trouver le slot qui se libère le plus tôt
+    const earliestSlotIndex = slotTimelines.indexOf(Math.min(...slotTimelines));
+    const startTime = slotTimelines[earliestSlotIndex];
+
+    // Assigner le job à ce slot
+    slotTimelines[earliestSlotIndex] = startTime + job.productionTimeDays;
+
+    // Mettre à jour les timings du job
+    job.startTime = startTime;
+    job.endTime = startTime + job.productionTimeDays;
+    job.slotUsed = earliestSlotIndex + 1;
+  }
+
+  // Le temps total est le max des timelines
+  return Math.max(...slotTimelines);
+}
+
+/**
+ * Agrège les matériaux de base de tous les jobs
+ */
+function aggregateRawMaterials(jobs, rawMaterialPool) {
+  const materialsMap = new Map(rawMaterialPool);
+
+  for (const job of jobs) {
+    for (const material of job.materials) {
+      materialsMap.set(
+        material.typeID,
+        (materialsMap.get(material.typeID) || 0) + material.quantity
+      );
+    }
+  }
+
+  // Convertir en array
+  const materials = [];
+  for (const [typeID, quantity] of materialsMap) {
+    const type = sde.getTypeById(typeID);
+    materials.push({
+      typeID: typeID,
+      name: type?.name || `Unknown (${typeID})`,
+      quantity: quantity
+    });
+  }
+
+  // Trier par nom
+  materials.sort((a, b) => a.name.localeCompare(b.name));
+
+  return materials;
+}
+
+// ============================================
+// FONCTION PRINCIPALE
+// ============================================
+
+/**
  * Calcule le plan de production complet
- * @param {Array} jobsInput - Jobs demandés par l'utilisateur [{product, runs, me, te}]
+ * 
+ * @param {Array} jobsInput - Jobs demandés [{product, runs, me, te}]
  * @param {string} stockText - Stock existant (format texte)
- * @param {Object} config - Configuration (slots, blacklist, etc.)
+ * @param {Object} config - Configuration {slots, blacklist, dontSplitShorterThan}
  * @returns {Object} Plan de production complet
  */
 async function calculateProductionPlan(jobsInput, stockText, config) {
-  logger.info(`Calculating production plan for ${jobsInput.length} jobs`);
+  logger.info(`🚀 Calcul du plan de production pour ${jobsInput.length} end products`);
 
-  // ✅ DÉTERMINISME CRITIQUE: Trier les jobs par nom de produit AVANT tout traitement
-  // Cela garantit que l'ordre d'entrée n'affecte JAMAIS le résultat
-  const sortedJobsInput = [...jobsInput].sort((a, b) => {
-    // Tri primaire par nom de produit
-    if (a.product !== b.product) {
-      return a.product.localeCompare(b.product);
-    }
-    // Tri secondaire par ME
-    if ((a.me || 10) !== (b.me || 10)) {
-      return (a.me || 10) - (b.me || 10);
-    }
-    // Tri tertiaire par TE
-    if ((a.te || 20) !== (b.te || 20)) {
-      return (a.te || 20) - (b.te || 20);
-    }
-    // Tri quaternaire par runs
-    return (a.runs || 1) - (b.runs || 1);
-  });
-
-  logger.info(`✅ Jobs sorted deterministically: ${sortedJobsInput.map(j => j.product).join(', ')}`);
-
-  // Parser le stock UNE SEULE FOIS (ne pas le modifier pendant le calcul)
+  // Parser le stock
   const stockResult = await parseStock(stockText);
 
-  // Vérifier les erreurs de parsing de stock
   if (stockResult.errors && stockResult.errors.length > 0) {
-    // Retourner immédiatement les erreurs de stock
     return {
       materials: [],
       jobs: {},
@@ -810,78 +572,76 @@ async function calculateProductionPlan(jobsInput, stockText, config) {
         product: `Ligne ${err.line}`,
         error: `❌ Erreur dans le stock ligne ${err.line}: ${err.error}\n   "${err.text}"`,
         critical: true
-      })),
-      cacheStats: productionCache.getStats()
+      }))
     };
   }
 
-  // Cloner le stock pour chaque calcul (éviter la mutation entre calculs)
   const stock = new Map(stockResult.stock);
-
-  // ✅ NOUVEAUX accumulateurs
-  const jobDescriptors = [];           // Jobs SANS materials
   const errors = [];
-  const allMaterialRequestMaps = [];   // ✅ Un Map par end product
 
-  // ✅ PASS 1: Construire structure de jobs (SANS materials)
-  logger.info('PASS 1: Building job structure (without materials)...');
+  // ============================================
+  // PHASE 1: BOM CALCULATION
+  // ============================================
+  logger.info('📊 PHASE 1: Calcul des BOM pour chaque end product');
 
-  for (const jobInput of sortedJobsInput) {
+  const materialPool = new Map();      // Matériaux à produire (avec blueprint)
+  const rawMaterialPool = new Map();   // Matériaux de base (pas de blueprint ou blacklist)
+
+  for (const jobInput of jobsInput) {
     const type = sde.findTypeByName(jobInput.product);
+    
     if (!type) {
-      const errorMsg = `❌ Produit introuvable : "${jobInput.product}". Vérifiez l'orthographe exacte du nom.`;
-      logger.warn(`Product not found: ${jobInput.product}`);
-      errors.push({ product: jobInput.product, error: errorMsg, critical: true });
+      errors.push({
+        product: jobInput.product,
+        error: `❌ Produit introuvable: "${jobInput.product}"`,
+        critical: true
+      });
       continue;
     }
 
     const blueprint = blueprintService.getBlueprintByProduct(type.typeId);
+    
     if (!blueprint) {
-      const errorMsg = `❌ Aucun blueprint trouvé pour : "${jobInput.product}". Ce produit ne peut pas être fabriqué.`;
-      logger.warn(`No blueprint found for: ${jobInput.product}`);
-      errors.push({ product: jobInput.product, error: errorMsg, critical: true });
+      errors.push({
+        product: jobInput.product,
+        error: `❌ Aucun blueprint pour: "${jobInput.product}"`,
+        critical: true
+      });
       continue;
     }
 
     const activity = blueprint.activities?.manufacturing || blueprint.activities?.reaction;
     if (!activity || !activity.products || activity.products.length === 0) {
-      const errorMsg = `❌ Blueprint invalide pour : "${jobInput.product}". Aucune activité de production disponible.`;
-      logger.warn(`Invalid blueprint for: ${jobInput.product}`);
-      errors.push({ product: jobInput.product, error: errorMsg, critical: true });
+      errors.push({
+        product: jobInput.product,
+        error: `❌ Blueprint invalide pour: "${jobInput.product}"`,
+        critical: true
+      });
       continue;
     }
 
     const productsPerRun = activity.products[0]?.quantity || 1;
     const quantityNeeded = jobInput.runs * productsPerRun;
 
-    // ✅ ISOLATION CRITIQUE: Chaque end product a son propre materialRequests Map
-    // Cela évite que les matériaux de différents end products soient poolés ensemble
-    const materialRequests = new Map();
+    logger.info(`  → ${jobInput.product}: ${quantityNeeded} unités (ME ${jobInput.me ?? 10}, TE ${jobInput.te ?? 20})`);
 
-    // Calculer arbre SANS materials (crée JobDescriptors)
-    // Utiliser le typeId comme endProductID unique pour marquer tous les composants de cet arbre
-    calculateProductionTree(
+    // Calculer la BOM pour cet end product
+    calculateBOM(
       type.typeId,
       quantityNeeded,
+      materialPool,
+      rawMaterialPool,
       stock,
       config.blacklist || {},
-      materialRequests,  // ✅ Map isolé pour cet end product
-      jobDescriptors,    // ✅ JobDescriptors (sans materials)
-      errors,
-      0,
-      jobInput.me || 10,
-      jobInput.te || 20,
-      type.typeId  // ✅ endProductID pour isoler les composants de chaque end product
+      0,  // depth = 0 pour end product
+      jobInput.me ?? 10,
+      jobInput.te ?? 20
     );
-
-    // ✅ Sauvegarder le Map pour pooling ultérieur
-    allMaterialRequestMaps.push(materialRequests);
   }
 
-  // VÉRIFICATION CRITIQUE : Si des erreurs critiques existent, arrêter immédiatement
+  // Vérifier les erreurs critiques
   const criticalErrors = errors.filter(err => err.critical);
   if (criticalErrors.length > 0) {
-    logger.error(`Critical errors detected: ${criticalErrors.length} errors`);
     return {
       materials: [],
       jobs: {},
@@ -889,200 +649,63 @@ async function calculateProductionPlan(jobsInput, stockText, config) {
       totalProductionTimeDays: 0,
       totalJobs: 0,
       totalMaterials: 0,
-      errors: criticalErrors,
-      cacheStats: productionCache.getStats()
+      errors: criticalErrors
     };
   }
 
-  // ✅ DÉTERMINISME: Consolider les JobDescriptors identiques AVANT de les organiser par catégorie
-  // Cela évite que l'ordre des jobs d'entrée affecte la consolidation
-  logger.info(`PASS 2: Consolidating and organizing ${jobDescriptors.length} job descriptors...`);
+  logger.info(`  ✅ Pool de matériaux: ${materialPool.size} types à produire`);
+  logger.info(`  ✅ Matériaux de base: ${rawMaterialPool.size} types à acheter`);
 
-  // ✅ ÉTAPE CRITIQUE: Trier TOUS les jobDescriptors AVANT consolidation
-  // Cela garantit que l'ordre de traitement est toujours le même
-  jobDescriptors.sort((a, b) => {
-    // Tri primaire par productTypeID
-    if (a.productTypeID !== b.productTypeID) {
-      return a.productTypeID - b.productTypeID;
-    }
-    // Tri secondaire par depth
-    if (a.depth !== b.depth) {
-      return a.depth - b.depth;
-    }
-    // Tri tertiaire par ME
-    if ((a.me || 0) !== (b.me || 0)) {
-      return (a.me || 0) - (b.me || 0);
-    }
-    // Tri quaternaire par TE
-    if ((a.te || 0) !== (b.te || 0)) {
-      return (a.te || 0) - (b.te || 0);
-    }
-    // Tri par isEndProduct (end products en dernier)
-    if (a.isEndProduct !== b.isEndProduct) {
-      return a.isEndProduct ? 1 : -1;
-    }
-    return 0;
-  });
+  // ============================================
+  // PHASE 2: JOB PLANNING
+  // ============================================
+  logger.info('🏭 PHASE 2: Création et splitting des jobs');
 
-  // Grouper les job descriptors identiques (même produit, même ME/TE, même depth)
-  // IMPORTANT: Ne PAS consolider les end products - ils doivent rester séparés selon la demande utilisateur
-  const consolidationMap = new Map();
-  let endProductSequence = 0;  // Compteur pour garder les end products séparés (maintenant déterministe grâce au tri)
+  const jobs = createJobsFromPool(materialPool, config);
 
-  for (const jobDesc of jobDescriptors) {
-    // Clé unique basée sur le produit, PAS sur l'ordre de création
-    let key;
+  logger.info(`  ✅ ${jobs.length} jobs créés`);
 
-    if (jobDesc.isEndProduct) {
-      // Pour les end products, créer une clé unique pour chaque occurrence
-      // Le compteur est maintenant déterministe car jobDescriptors est trié
-      key = `${jobDesc.productTypeID}_${jobDesc.me || 0}_${jobDesc.te || 0}_${jobDesc.depth}_end_${endProductSequence++}`;
-    } else {
-      // ✅ ISOLATION CRITIQUE: Pour les composants intermédiaires, inclure endProductID dans la clé
-      // Cela empêche les composants de différents end products d'être consolidés ensemble
-      key = `${jobDesc.productTypeID}_${jobDesc.me || 0}_${jobDesc.te || 0}_${jobDesc.depth}_endProd_${jobDesc.endProductID}`;
-    }
+  // ============================================
+  // PHASE 3: MATERIAL CALCULATION
+  // ============================================
+  logger.info('📦 PHASE 3: Calcul des matériaux pour chaque job');
 
-    if (!consolidationMap.has(key)) {
-      consolidationMap.set(key, {
-        ...jobDesc,
-        runs: 0
-      });
-    }
+  calculateJobMaterials(jobs);
 
-    const group = consolidationMap.get(key);
-    group.runs += jobDesc.runs;
-  }
+  // ============================================
+  // PHASE 4: FORMATTING & DISPLAY
+  // ============================================
+  logger.info('📋 PHASE 4: Organisation et calcul des timelines');
 
-  // Convertir la Map en array et trier de manière déterministe
-  const consolidatedJobDescriptors = Array.from(consolidationMap.values()).sort((a, b) => {
-    // Tri primaire par productTypeID
-    if (a.productTypeID !== b.productTypeID) {
-      return a.productTypeID - b.productTypeID;
-    }
-    // Tri secondaire par depth
-    if (a.depth !== b.depth) {
-      return a.depth - b.depth;
-    }
-    // Tri tertiaire par ME
-    if ((a.me || 0) !== (b.me || 0)) {
-      return (a.me || 0) - (b.me || 0);
-    }
-    // Tri quaternaire par TE
-    return (a.te || 0) - (b.te || 0);
-  });
+  const organizedJobs = organizeJobsByCategory(jobs);
+  const categoryTimings = calculateTimelines(organizedJobs, config);
+  const materials = aggregateRawMaterials(jobs, rawMaterialPool);
 
-  logger.info(`Consolidated ${jobDescriptors.length} descriptors into ${consolidatedJobDescriptors.length} unique jobs`);
+  // Calculer le temps total
+  const totalProductionTimeDays = Math.max(
+    ...Object.values(categoryTimings).map(ct => ct.totalTimeDays),
+    0
+  );
 
-  // Organiser les JobDescriptors consolidés par catégories
-  const organizedDescriptors = organizeJobs(consolidatedJobDescriptors);
-
-  // ✅ PASS 2: Optimiser (consolider + splitter)
-  const organizedJobs = {};
-  const categoryTimings = {};
-  let totalProductionTime = 0;
-
-  for (const category in organizedDescriptors) {
-    if (organizedDescriptors[category].length === 0) continue;
-
-    const reactionDescs = organizedDescriptors[category].filter(j => j.activityType === 'reaction');
-    const mfgDescs = organizedDescriptors[category].filter(j => j.activityType === 'manufacturing');
-
-    let allOptimizedDescriptors = [];
-    let maxTimeDays = 0;
-
-    // Optimiser reactions
-    if (reactionDescs.length > 0) {
-      const optimized = optimizeJobsForCategory(reactionDescs, config, 'reaction', `${category}_reactions`);
-      allOptimizedDescriptors.push(...optimized.jobDescriptors);  // ✅ Toujours descriptors
-      maxTimeDays = Math.max(maxTimeDays, optimized.totalTimeDays);
-    }
-
-    // Optimiser manufacturing
-    if (mfgDescs.length > 0) {
-      const optimized = optimizeJobsForCategory(mfgDescs, config, 'manufacturing', `${category}_manufacturing`);
-      allOptimizedDescriptors.push(...optimized.jobDescriptors);
-      maxTimeDays = Math.max(maxTimeDays, optimized.totalTimeDays);
-    }
-
-    // ✅ PASS 3: Résoudre materials pour jobs optimisés
-    logger.info(`PASS 3: Resolving materials for ${allOptimizedDescriptors.length} jobs in ${category}...`);
-    const completeJobs = resolveMaterialsForJobs(allOptimizedDescriptors);
-
-    organizedJobs[category] = completeJobs;  // ✅ MAINTENANT complets
-    categoryTimings[category] = {
-      totalTimeDays: maxTimeDays,
-      slotsUsed: completeJobs.length,
-      jobCount: completeJobs.length
-    };
-
-    totalProductionTime = Math.max(totalProductionTime, maxTimeDays);
-  }
-
-  // ✅ POOLER chaque end product séparément, puis additionner les résultats
-  // Cela évite que les matériaux de différents end products soient poolés ensemble
-  const finalMaterialsMap = new Map();
-
-  for (const materialRequestMap of allMaterialRequestMaps) {
-    // Pool les materials pour cet end product spécifique
-    const pooledMaterialsForThisEndProduct = poolMaterialRequests(materialRequestMap);
-
-    // Additionner aux matériaux finaux
-    for (const [typeID, quantity] of pooledMaterialsForThisEndProduct.entries()) {
-      if (!finalMaterialsMap.has(typeID)) {
-        finalMaterialsMap.set(typeID, 0);
-      }
-      finalMaterialsMap.set(typeID, finalMaterialsMap.get(typeID) + quantity);
-    }
-  }
-
-  // Log pour débogage
-  let totalRequests = 0;
-  for (const map of allMaterialRequestMaps) {
-    totalRequests += map.size;
-  }
-  logger.info(`Pooling ${totalRequests} material requests (${allMaterialRequestMaps.length} end products)...`);
-  const pooledMaterials = finalMaterialsMap;
-
-  // Convertir en liste de matériaux
-  const materials = [];
-  for (const [typeID, quantity] of pooledMaterials) {
-    const type = sde.getTypeById(typeID);
-    materials.push({
-      typeID: typeID,
-      name: type?.name || `Unknown (${typeID})`,
-      quantity: quantity
-    });
-  }
-
-  // Trier
-  materials.sort((a, b) => a.name.localeCompare(b.name));
-
-  logger.info(`Production plan complete: ${jobDescriptors.length} jobs, ${materials.length} materials`);
+  logger.info(`✅ Plan de production terminé: ${jobs.length} jobs, ${materials.length} matériaux`);
 
   return {
     materials: materials,
     jobs: organizedJobs,
     categoryTimings: categoryTimings,
-    totalProductionTimeDays: totalProductionTime,
-    totalJobs: jobDescriptors.length,
+    totalProductionTimeDays: totalProductionTimeDays,
+    totalJobs: jobs.length,
     totalMaterials: materials.length,
-    errors: errors.length > 0 ? errors : undefined,
-    cacheStats: productionCache.getStats()
+    errors: errors.length > 0 ? errors : undefined
   };
 }
 
-/**
- * Nettoyer le cache (pour tests ou reset)
- */
-function clearCache() {
-  productionCache.clear();
-}
+// ============================================
+// EXPORTS
+// ============================================
 
 export default {
   calculateProductionPlan,
   parseStock,
-  isBlacklisted,
-  clearCache,
-  getCacheStats: () => productionCache.getStats()
+  isBlacklisted
 };
