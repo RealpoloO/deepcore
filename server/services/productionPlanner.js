@@ -230,7 +230,7 @@ function calculateBOM(
   const productsPerRun = activity.products[0]?.quantity || 1;
   const runsNeeded = Math.ceil(quantityToProduce / productsPerRun);
 
-  // Ajouter au pool de matériaux à produire (sauf si depth=0, c'est l'end product)
+0  // Ajouter au pool de matériaux à produire (sauf si depth=0, c'est l'end product)
   if (depth > 0) {
     const key = `${productTypeID}_${me}_${te}`;
     
