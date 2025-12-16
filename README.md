@@ -14,8 +14,28 @@ Application web pour suivre votre minage Eve Online sur tous vos personnages.
 
 - Node.js 18+ 
 - Compte développeur Eve Online
+- EVE Online Static Data Export (SDE)
 
-## Configuration
+## Installation
+
+### 1. Télécharger les données statiques EVE (SDE)
+
+Les fichiers SDE sont nécessaires pour le fonctionnement de l'application mais sont trop volumineux pour être versionnés sur GitHub.
+
+**Windows:**
+```powershell
+.\download-sde.ps1
+```
+
+**Linux/Mac:**
+```bash
+chmod +x download-sde.sh
+./download-sde.sh
+```
+
+Ou télécharger manuellement depuis: https://developers.eveonline.com/resource/resources
+
+### 2. Configuration
 
 1. Créer une application sur https://developers.eveonline.com/applications
    - Type: Authentication & API Access
