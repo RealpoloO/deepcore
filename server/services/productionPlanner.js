@@ -3,25 +3,30 @@
  * PRODUCTION PLANNER - ARCHITECTURE SIMPLIFIÉE by popey
  * ============================================================================
  * 
- * LOGIQUE SIMPLE EN 4 PHASES:
+ * LOGIQUE SIMPLE EN 4 PHASES :
  * 
  * 1. BOM CALCULATION
- *    Pour chaque ligne end product (ex: Archon ME 8 TE 16)
- *    → Calculer récursivement les matériaux nécessaires
- *    → Résultat: Pool de matériaux à produire (ex: 5000 Carbon Fiber)
+ *    Pour chaque ligne end product (ex : Archon ME 8 TE 16)
+ *    → Appliquer le coefficient de réduction des matériaux et du temps pour chaque BPO
+ *       (ME 10 / TE 20 pour manufacturing, coefficient futur pour reactions, end product = utilisateur)
+ *    → Calculer récursivement les « matériaux à crafter » nécessaires
+ *    → Vérifier blacklist (si blacklist → acheter direct, sinon ajouter au pool)
+ *    → Appliquer stock pendant la récursion (réduit quantités nécessaires)
+ *    → Résultat : Pool de matériaux à produire (ex: 5000 Carbon Fiber, capital, FTL etc...)
  * 
  * 2. JOB PLANNING
- *    Pour chaque matériau du pool:
- *    - Vérifier blacklist (si blacklist → acheter)
- *    - Calculer runs nécessaires (ex: 5000 ÷ 10 = 500 runs)
- *    - Splitter selon config (500 runs → 20 jobs de 25 runs)
+ *    Pour chaque matériau du pool : les mettre dans la bonne section
+ *    (fuel blocks, composite reactions, hybrid, Others, Advanced components etc...)
+ *    - Calculer runs nécessaires (ex : 5000 carbon fiber ÷ 200 par run = 25 runs)
+ *    - Splitter selon config PAR SECTION (20 reaction slots = 20 pour CHAQUE section)
+ *      avec don't split job shorter than
  * 
  * 3. MATERIAL CALCULATION
  *    Pour chaque job créé
  *    → Calculer les matériaux de base nécessaires
  * 
  * 4. FORMATTING & DISPLAY
- *    → Organiser par catégories
+ *    → Organiser par catégories détaillées
  *    → Calculer timelines
  *    → Retourner le plan complet
  */
@@ -146,6 +151,37 @@ function isBlacklisted(typeID, blacklist) {
 }
 
 // ============================================
+// COEFFICIENTS (ME/TE) - MODULAIRE
+// ============================================
+
+/**
+ * Calcule les coefficients ME/TE pour un job
+ * Fonction modulaire pour faciliter l'ajout futur de rigs, skills, structures, etc.
+ * 
+ * @param {string} activityType - 'manufacturing' ou 'reaction'
+ * @param {number} depth - Profondeur dans l'arbre (0 = end product)
+ * @param {number} userME - ME défini par l'utilisateur (pour end products)
+ * @param {number} userTE - TE défini par l'utilisateur (pour end products)
+ * @returns {Object} { me, te }
+ */
+function getCoefficients(activityType, depth, userME = 10, userTE = 20) {
+  // End products : utiliser les valeurs utilisateur
+  if (depth === 0) {
+    return { me: userME, te: userTE };
+  }
+
+  // Reactions : pas de ME/TE actuellement (coefficient futur pour reactions)
+  // TODO: Ajouter coefficient réactions (structure, rigs, skills)
+  if (activityType === 'reaction') {
+    return { me: 0, te: 0 };
+  }
+
+  // Manufacturing components : ME 10 / TE 20 (BPO optimaux)
+  // TODO: Ajouter rigs, skills, structures
+  return { me: 10, te: 20 };
+}
+
+// ============================================
 // PHASE 1: BOM CALCULATION
 // ============================================
 
@@ -230,33 +266,32 @@ function calculateBOM(
   const productsPerRun = activity.products[0]?.quantity || 1;
   const runsNeeded = Math.ceil(quantityToProduce / productsPerRun);
 
-0  // Ajouter au pool de matériaux à produire (sauf si depth=0, c'est l'end product)
-  if (depth > 0) {
-    const key = `${productTypeID}_${me}_${te}`;
-    
-    if (!materialPool.has(key)) {
-      materialPool.set(key, {
-        typeID: productTypeID,
-        me: me,
-        te: te,
-        totalRuns: 0,
-        productsPerRun: productsPerRun
-      });
-    }
-    
-    const entry = materialPool.get(key);
-    entry.totalRuns += runsNeeded;
+  // Ajouter au pool de matériaux à produire (inclure les end products avec flag)
+  const key = `${productTypeID}_${me}_${te}`;
+  
+  if (!materialPool.has(key)) {
+    materialPool.set(key, {
+      typeID: productTypeID,
+      me: me,
+      te: te,
+      totalRuns: 0,
+      productsPerRun: productsPerRun,
+      isEndProduct: depth === 0,
+      depth: depth
+    });
   }
+  
+  const entry = materialPool.get(key);
+  entry.totalRuns += runsNeeded;
 
   // Calculer récursivement les matériaux nécessaires
-  // Pour les composants (depth > 0), utiliser toujours ME=10 et TE=20
-  const componentME = depth === 0 ? me : 10;
-  const componentTE = depth === 0 ? te : 20;
+  // Utiliser getCoefficients pour déterminer ME/TE des composants
+  const activityType = blueprintService.getActivityType(blueprint);
+  const componentCoef = getCoefficients(activityType, depth + 1, me, te);
 
   for (const material of activity.materials) {
     // Calculer quantité avec ME bonus
-    const activityType = blueprintService.getActivityType(blueprint);
-    const meBonus = activityType === 'reaction' ? 0 : (componentME / 100);
+    const meBonus = activityType === 'reaction' ? 0 : (componentCoef.me / 100);
     const baseQuantity = material.quantity * runsNeeded;
     const quantityWithME = Math.ceil(baseQuantity * (1 - meBonus));
 
@@ -268,8 +303,8 @@ function calculateBOM(
       stock,
       blacklist,
       depth + 1,
-      10,  // Composants toujours ME 10
-      20   // Composants toujours TE 20
+      componentCoef.me,
+      componentCoef.te
     );
   }
 }
@@ -323,61 +358,214 @@ function splitRuns(totalRuns, productionTimePerRun, slotsAvailable, dontSplitSho
 
 /**
  * Crée les jobs à partir du pool de matériaux
+ * PHASE 2 : Organise par section, calcule runs, split intelligemment
+ * 
+ * LOGIQUE:
+ * - End products: JAMAIS splittés (1 job par end product)
+ * - Composants: Organisés par section, slots PARTAGÉS dans la section
+ *   Exemple: 5 matériaux, 20 slots → 15 slots dispo pour splitting
+ *   Si un matériau prend 10 jours: peut splitter en 2 jobs
  */
 function createJobsFromPool(materialPool, config) {
   const jobs = [];
-
+  
+  // ÉTAPE 1: Enrichir avec blueprint + catégorie
+  const enrichedEntries = [];
+  
   for (const [key, entry] of materialPool) {
-    const { typeID, me, te, totalRuns, productsPerRun } = entry;
-
-    const type = sde.getTypeById(typeID);
-    const blueprint = blueprintService.getBlueprintByProduct(typeID);
-
+    const blueprint = blueprintService.getBlueprintByProduct(entry.typeID);
     if (!blueprint) {
-      logger.warn(`Blueprint introuvable pour typeID ${typeID}`);
+      logger.warn(`Blueprint introuvable pour typeID ${entry.typeID}`);
+      continue;
+    }
+    
+    const type = sde.getTypeById(entry.typeID);
+    const activityType = blueprintService.getActivityType(blueprint);
+    const productionTimePerRun = blueprintService.calculateProductionTime(blueprint, 1, entry.te);
+    const category = entry.isEndProduct ? 'end_product_jobs' : productionCategories.getCategoryByGroupID(type?.groupId);
+    
+    enrichedEntries.push({
+      ...entry,
+      blueprint,
+      type,
+      activityType,
+      productionTimePerRun,
+      category
+    });
+  }
+
+  // ÉTAPE 2: Organiser par section
+  const sections = {};
+  for (const entry of enrichedEntries) {
+    const sectionKey = entry.category || 'others';
+    if (!sections[sectionKey]) {
+      sections[sectionKey] = [];
+    }
+    sections[sectionKey].push(entry);
+  }
+
+  logger.info(`  → ${Object.keys(sections).length} sections, ${enrichedEntries.length} matériaux`);
+
+  // ÉTAPE 3: Créer les jobs par section
+  for (const [sectionKey, entries] of Object.entries(sections)) {
+    
+    // CAS SPÉCIAL: End products - JAMAIS splittés
+    if (sectionKey === 'end_product_jobs') {
+      for (const entry of entries) {
+        const totalTime = entry.totalRuns * entry.productionTimePerRun;
+        jobs.push({
+          blueprintTypeID: entry.blueprint.blueprintTypeID,
+          productTypeID: entry.typeID,
+          productName: entry.type?.name || `Unknown (${entry.typeID})`,
+          runs: entry.totalRuns,
+          me: entry.me,
+          te: entry.te,
+          activityType: entry.activityType,
+          productionTimePerRun: entry.productionTimePerRun,
+          productionTime: totalTime,
+          productionTimeDays: totalTime / 86400,
+          quantityProduced: entry.totalRuns * entry.productsPerRun,
+          isEndProduct: true,
+          depth: entry.depth || 0,
+          materials: []
+        });
+      }
+      logger.info(`  → ${sectionKey}: ${entries.length} end products (pas de split)`);
       continue;
     }
 
-    const activityType = blueprintService.getActivityType(blueprint);
-    const productionTimePerRun = blueprintService.calculateProductionTime(blueprint, 1, te);
+    // CAS GÉNÉRAL: Composants - Calculer slots disponibles pour la section
+    const isReaction = entries[0].activityType === 'reaction';
+    const totalSlotsInSection = isReaction ? config.reactionSlots : config.manufacturingSlots;
+    const numMaterials = entries.length;
 
-    // Déterminer les slots disponibles
-    const slotsAvailable = activityType === 'reaction' 
-      ? config.reactionSlots 
-      : config.manufacturingSlots;
+    // Vérification: assez de slots?
+    if (numMaterials > totalSlotsInSection) {
+      const activityName = isReaction ? 'reaction' : 'manufacturing';
+      throw new Error(
+        `❌ Section ${sectionKey}: ${numMaterials} matériaux mais seulement ${totalSlotsInSection} ${activityName} slots!\n` +
+        `Il faut au moins ${numMaterials} slots pour cette section.`
+      );
+    }
 
-    // Splitter les runs
-    const runsList = splitRuns(
-      totalRuns,
-      productionTimePerRun,
-      slotsAvailable,
-      config.dontSplitShorterThan
-    );
+    // LOGIQUE DE SPLITTING CORRECTE:
+    // - Chaque section a totalSlotsInSection slots
+    // - On peut splitter SEULEMENT si: durée > dontSplitShorterThan
+    // - IMPORTANT: Le nombre total de jobs dans la section ≤ totalSlotsInSection
+    
+    logger.info(`  → ${sectionKey}: ${numMaterials} matériaux, ${totalSlotsInSection} slots disponibles`);
 
-    // Créer un job pour chaque split
-    for (let i = 0; i < runsList.length; i++) {
-      const runs = runsList[i];
-      const totalTime = runs * productionTimePerRun;
+    // ÉTAPE 1: Calculer la durée de chaque matériau et déterminer lesquels peuvent être splittés
+    const materialsWithTime = entries.map(entry => {
+      const totalTime = entry.totalRuns * entry.productionTimePerRun;
+      const totalTimeDays = totalTime / 86400;
+      const canSplit = totalTimeDays > config.dontSplitShorterThan;
+      return { ...entry, totalTime, totalTimeDays, canSplit };
+    });
 
+    // ÉTAPE 2: Compter combien de matériaux peuvent être splittés
+    const splittableMaterials = materialsWithTime.filter(m => m.canSplit);
+    const nonSplittableMaterials = materialsWithTime.filter(m => !m.canSplit);
+    
+    // ÉTAPE 3: Calculer les slots restants après les matériaux non-splittables
+    const slotsUsedByNonSplittable = nonSplittableMaterials.length;
+    const slotsAvailableForSplitting = totalSlotsInSection - slotsUsedByNonSplittable;
+    
+    logger.info(`    - ${nonSplittableMaterials.length} matériaux trop courts (< ${config.dontSplitShorterThan}j)`);
+    logger.info(`    - ${splittableMaterials.length} matériaux splittables`);
+    logger.info(`    - ${slotsAvailableForSplitting} slots disponibles pour splitting`);
+
+    // ÉTAPE 4: Créer jobs pour matériaux NON splittables (1 job chacun)
+    for (const material of nonSplittableMaterials) {
       jobs.push({
-        blueprintTypeID: blueprint.blueprintTypeID,
-        productTypeID: typeID,
-        productName: type?.name || `Unknown (${typeID})`,
-        runs: runs,
-        me: me,
-        te: te,
-        activityType: activityType,
-        productionTimePerRun: productionTimePerRun,
-        productionTime: totalTime,
-        productionTimeDays: totalTime / 86400,
-        quantityProduced: runs * productsPerRun,
-        splitIndex: runsList.length > 1 ? i + 1 : undefined,
-        splitCount: runsList.length > 1 ? runsList.length : undefined,
-        materials: []  // Sera rempli en Phase 3
+        blueprintTypeID: material.blueprint.blueprintTypeID,
+        productTypeID: material.typeID,
+        productName: material.type?.name || `Unknown (${material.typeID})`,
+        runs: material.totalRuns,
+        me: material.me,
+        te: material.te,
+        activityType: material.activityType,
+        productionTimePerRun: material.productionTimePerRun,
+        productionTime: material.totalTime,
+        productionTimeDays: material.totalTimeDays,
+        quantityProduced: material.totalRuns * material.productsPerRun,
+        isEndProduct: false,
+        depth: material.depth || 1,
+        materials: []
       });
     }
+
+    // ÉTAPE 5: Splitter les matériaux splittables
+    if (splittableMaterials.length > 0) {
+      // Calculer combien de slots chaque matériau splittable peut utiliser en moyenne
+      const slotsPerSplittable = Math.floor(slotsAvailableForSplitting / splittableMaterials.length);
+      
+      if (slotsPerSplittable < 1) {
+        // Pas assez de slots pour splitter, créer 1 job par matériau
+        logger.warn(`    ⚠ Pas assez de slots pour splitter (${slotsAvailableForSplitting} slots pour ${splittableMaterials.length} matériaux)`);
+        for (const material of splittableMaterials) {
+          jobs.push({
+            blueprintTypeID: material.blueprint.blueprintTypeID,
+            productTypeID: material.typeID,
+            productName: material.type?.name || `Unknown (${material.typeID})`,
+            runs: material.totalRuns,
+            me: material.me,
+            te: material.te,
+            activityType: material.activityType,
+            productionTimePerRun: material.productionTimePerRun,
+            productionTime: material.totalTime,
+            productionTimeDays: material.totalTimeDays,
+            quantityProduced: material.totalRuns * material.productsPerRun,
+            isEndProduct: false,
+            depth: material.depth || 1,
+            materials: []
+          });
+        }
+      } else {
+        // On peut splitter
+        for (const material of splittableMaterials) {
+          const runsList = splitRuns(
+            material.totalRuns,
+            material.productionTimePerRun,
+            slotsPerSplittable,
+            config.dontSplitShorterThan
+          );
+
+          for (let i = 0; i < runsList.length; i++) {
+            const runs = runsList[i];
+            const totalTime = runs * material.productionTimePerRun;
+            
+            jobs.push({
+              blueprintTypeID: material.blueprint.blueprintTypeID,
+              productTypeID: material.typeID,
+              productName: material.type?.name || `Unknown (${material.typeID})`,
+              runs: runs,
+              me: material.me,
+              te: material.te,
+              activityType: material.activityType,
+              productionTimePerRun: material.productionTimePerRun,
+              productionTime: totalTime,
+              productionTimeDays: totalTime / 86400,
+              quantityProduced: runs * material.productsPerRun,
+              isEndProduct: false,
+              depth: material.depth || 1,
+              splitIndex: runsList.length > 1 ? i + 1 : undefined,
+              splitCount: runsList.length > 1 ? runsList.length : undefined,
+              materials: []
+            });
+          }
+        }
+      }
+    }
+    
+    const jobsInSection = jobs.filter(j => 
+      entries.some(e => e.typeID === j.productTypeID)
+    ).length;
+    
+    logger.info(`    ✅ ${jobsInSection} jobs créés pour cette section`);
   }
 
+  logger.info(`  → Total: ${jobs.length} jobs créés`);
   return jobs;
 }
 
@@ -413,6 +601,7 @@ function calculateJobMaterials(jobs) {
  */
 function organizeJobsByCategory(jobs) {
   const organized = {
+    end_product_jobs: [],
     fuel_blocks: [],
     intermediate_composite_reactions: [],
     composite_reactions: [],
@@ -425,6 +614,12 @@ function organizeJobsByCategory(jobs) {
   };
 
   for (const job of jobs) {
+    // End products dans leur catégorie dédiée
+    if (job.isEndProduct) {
+      organized.end_product_jobs.push(job);
+      continue;
+    }
+
     const type = sde.getTypeById(job.productTypeID);
     if (!type) {
       organized.others.push(job);
