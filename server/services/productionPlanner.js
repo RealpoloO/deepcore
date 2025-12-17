@@ -285,13 +285,14 @@ function calculateBOM(
   entry.totalRuns += runsNeeded;
 
   // Calculer récursivement les matériaux nécessaires
-  // Utiliser getCoefficients pour déterminer ME/TE des composants
+  // IMPORTANT: Le ME du produit ACTUEL affecte SES matériaux
+  // Ensuite, les composants utilisent LEURS propres ME (calculés via getCoefficients)
   const activityType = blueprintService.getActivityType(blueprint);
   const componentCoef = getCoefficients(activityType, depth + 1, me, te);
 
   for (const material of activity.materials) {
-    // Calculer quantité avec ME bonus
-    const meBonus = activityType === 'reaction' ? 0 : (componentCoef.me / 100);
+    // Calculer quantité avec ME bonus DU PRODUIT ACTUEL (pas des composants)
+    const meBonus = activityType === 'reaction' ? 0 : (me / 100);
     const baseQuantity = material.quantity * runsNeeded;
     const quantityWithME = Math.ceil(baseQuantity * (1 - meBonus));
 
@@ -705,23 +706,18 @@ function simulateParallelExecution(jobs, slotsAvailable) {
 }
 
 /**
- * Agrège les matériaux de base de tous les jobs
+ * Agrège les matériaux de base à acheter
+ *
+ * IMPORTANT: On retourne SEULEMENT rawMaterialPool (matériaux sans blueprint + blacklistés)
+ * PAS les matériaux des jobs car ils vont être craftés !
+ *
+ * @param {Map} rawMaterialPool - Pool de matériaux à acheter (pas de blueprint ou blacklistés)
+ * @returns {Array} Liste des matériaux à acheter
  */
-function aggregateRawMaterials(jobs, rawMaterialPool) {
-  const materialsMap = new Map(rawMaterialPool);
-
-  for (const job of jobs) {
-    for (const material of job.materials) {
-      materialsMap.set(
-        material.typeID,
-        (materialsMap.get(material.typeID) || 0) + material.quantity
-      );
-    }
-  }
-
-  // Convertir en array
+function aggregateRawMaterials(rawMaterialPool) {
   const materials = [];
-  for (const [typeID, quantity] of materialsMap) {
+
+  for (const [typeID, quantity] of rawMaterialPool) {
     const type = sde.getTypeById(typeID);
     materials.push({
       typeID: typeID,
@@ -874,7 +870,7 @@ async function calculateProductionPlan(jobsInput, stockText, config) {
 
   const organizedJobs = organizeJobsByCategory(jobs);
   const categoryTimings = calculateTimelines(organizedJobs, config);
-  const materials = aggregateRawMaterials(jobs, rawMaterialPool);
+  const materials = aggregateRawMaterials(rawMaterialPool);
 
   // Calculer le temps total
   const totalProductionTimeDays = Math.max(

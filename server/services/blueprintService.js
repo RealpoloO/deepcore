@@ -3,6 +3,7 @@ import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import logger from '../utils/logger.js';
+import sde from './sde.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,8 +109,12 @@ function calculateMaterials(blueprint, runs = 1, me = 0) {
     const baseQuantity = material.quantity;
     const adjustedQuantity = Math.ceil(baseQuantity * (1 - meBonus) * runs);
 
+    // Ajouter le nom du matériau pour les logs/debug
+    const type = sde.getTypeById(material.typeID);
+
     materials.push({
       typeID: material.typeID,
+      name: type?.name || `Unknown (${material.typeID})`,
       quantity: adjustedQuantity
     });
   }
@@ -142,15 +147,16 @@ function calculateProductionTime(blueprint, runs = 1, te = 0) {
 
 /**
  * Détermine le type d'activité du blueprint (manufacturing ou reaction)
+ * IMPORTANT: Manufacturing a priorité sur reaction (même logique que activity selection)
  * @param {Object} blueprint - Le blueprint
  * @returns {string} 'manufacturing' ou 'reaction'
  */
 function getActivityType(blueprint) {
-  if (blueprint.activities?.reaction) {
-    return 'reaction';
-  }
   if (blueprint.activities?.manufacturing) {
     return 'manufacturing';
+  }
+  if (blueprint.activities?.reaction) {
+    return 'reaction';
   }
   return 'unknown';
 }

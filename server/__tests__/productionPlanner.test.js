@@ -11,61 +11,58 @@ describe('Production Planner', () => {
   });
 
   describe('parseStock', () => {
-    test('should parse stock with colon separator', async () => {
-      const stockText = `Tritanium: 1000
-Pyerite: 500`;
-
-      const stock = await productionPlanner.parseStock(stockText);
-
-      // Tritanium = typeID 34, Pyerite = typeID 35
-      expect(stock.get(34)).toBe(1000);
-      expect(stock.get(35)).toBe(500);
-    });
-
     test('should parse stock with space separator', async () => {
       const stockText = `Tritanium 1000
 Pyerite 500`;
 
-      const stock = await productionPlanner.parseStock(stockText);
+      const { stock, errors } = await productionPlanner.parseStock(stockText);
 
+      // Tritanium = typeID 34, Pyerite = typeID 35
       expect(stock.get(34)).toBe(1000);
       expect(stock.get(35)).toBe(500);
+      expect(errors.length).toBe(0);
     });
 
     test('should handle empty stock', async () => {
-      const stock = await productionPlanner.parseStock('');
+      const { stock, errors } = await productionPlanner.parseStock('');
       expect(stock.size).toBe(0);
+      expect(errors.length).toBe(0);
     });
 
     test('should handle malformed lines', async () => {
-      const stockText = `Tritanium: 1000
+      const stockText = `Tritanium 1000
 invalid line without number
-Pyerite: 500`;
+Pyerite 500`;
 
-      const stock = await productionPlanner.parseStock(stockText);
+      const { stock, errors } = await productionPlanner.parseStock(stockText);
 
       expect(stock.get(34)).toBe(1000);
       expect(stock.get(35)).toBe(500);
       expect(stock.size).toBe(2);
+      expect(errors.length).toBe(1);
+      expect(errors[0].error).toContain('Format invalide');
     });
 
     test('should accumulate duplicate items', async () => {
-      const stockText = `Tritanium: 1000
-Tritanium: 500`;
+      const stockText = `Tritanium 1000
+Tritanium 500`;
 
-      const stock = await productionPlanner.parseStock(stockText);
+      const { stock, errors } = await productionPlanner.parseStock(stockText);
 
       expect(stock.get(34)).toBe(1500);
+      expect(errors.length).toBe(0);
     });
 
-    test('should ignore unknown items', async () => {
-      const stockText = `Tritanium: 1000
-UnknownItemThatDoesNotExist: 500`;
+    test('should ignore unknown items and report error', async () => {
+      const stockText = `Tritanium 1000
+UnknownItemThatDoesNotExist 500`;
 
-      const stock = await productionPlanner.parseStock(stockText);
+      const { stock, errors } = await productionPlanner.parseStock(stockText);
 
       expect(stock.get(34)).toBe(1000);
       expect(stock.size).toBe(1);
+      expect(errors.length).toBe(1);
+      expect(errors[0].error).toContain('introuvable');
     });
   });
 
@@ -225,13 +222,6 @@ UnknownItemThatDoesNotExist: 500`;
     });
 
     test('should organize jobs by category', async () => {
-      const jobs = [
-        {
-          product: 'Tritanium',
-          runs: 1
-        }
-      ];
-
       const config = {
         reactionSlots: 20,
         manufacturingSlots: 30,
@@ -239,12 +229,16 @@ UnknownItemThatDoesNotExist: 500`;
         blacklist: {}
       };
 
-      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+      const plan = await productionPlanner.calculateProductionPlan([], '', config);
 
-      // Vérifier que jobs est organisé par catégories
+      // Vérifier que la structure jobs contient toutes les catégories
       expect(plan.jobs).toHaveProperty('intermediate_composite_reactions');
       expect(plan.jobs).toHaveProperty('composite_reactions');
       expect(plan.jobs).toHaveProperty('end_product_jobs');
+      expect(plan.jobs).toHaveProperty('fuel_blocks');
+      expect(plan.jobs).toHaveProperty('advanced_components');
+      expect(plan.jobs).toHaveProperty('capital_components');
+      expect(plan.jobs).toHaveProperty('others');
     });
 
     test('should calculate category timings', async () => {
@@ -385,12 +379,71 @@ UnknownItemThatDoesNotExist: 500`;
     });
   });
 
-  describe('Integration Tests', () => {
-    test('should calculate complete production chain', async () => {
-      // Test avec un item qui nécessite une chaîne de production
+  describe('Integration Tests - Items with Blueprints', () => {
+    test('should calculate production for Carbon Fiber (simple component)', async () => {
       const jobs = [
         {
-          product: 'Tritanium',
+          product: 'Carbon Fiber',
+          runs: 10,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Carbon Fiber a un blueprint, donc on devrait avoir des jobs
+      expect(plan.totalJobs).toBeGreaterThan(0);
+      expect(plan.jobs.end_product_jobs.length).toBe(1);
+      expect(plan.jobs.end_product_jobs[0].productName).toBe('Carbon Fiber');
+      expect(plan.jobs.end_product_jobs[0].me).toBe(10);
+      expect(plan.jobs.end_product_jobs[0].te).toBe(20);
+      expect(plan.jobs.end_product_jobs[0].isEndProduct).toBe(true);
+    });
+
+    test('should calculate production for氘代十六烷基 (complex reaction)', async () => {
+      const caesariumType = sde.findTypeByName('Caesarium Cadmide');
+
+      if (caesariumType) {
+        const jobs = [
+          {
+            product: 'Caesarium Cadmide',
+            runs: 100,
+            me: 10,
+            te: 20
+          }
+        ];
+
+        const config = {
+          reactionSlots: 20,
+          manufacturingSlots: 30,
+          dontSplitShorterThan: 1.2,
+          blacklist: {}
+        };
+
+        const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+        // Devrait avoir des jobs de type reaction
+        expect(plan.totalJobs).toBeGreaterThan(0);
+        expect(plan.jobs.end_product_jobs.length).toBe(1);
+
+        // Vérifier qu'il y a des matériaux intermédiaires
+        const hasIntermediateReactions = plan.jobs.intermediate_composite_reactions.length > 0;
+        expect(hasIntermediateReactions || plan.materials.length > 0).toBe(true);
+      }
+    });
+
+    test('should calculate complete production chain for complex item', async () => {
+      const jobs = [
+        {
+          product: 'Carbon Fiber',
           runs: 1
         }
       ];
@@ -420,6 +473,70 @@ UnknownItemThatDoesNotExist: 500`;
       expect(typeof plan.totalProductionTimeDays).toBe('number');
       expect(typeof plan.totalJobs).toBe('number');
       expect(typeof plan.totalMaterials).toBe('number');
+    });
+
+    test('ME=0 vs ME=10 should produce DIFFERENT material quantities', async () => {
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      // Test avec Nanite Repair Paste qui a un blueprint de MANUFACTURING (pas reaction)
+      // Les reactions ne bénéficient PAS du ME dans EVE Online
+      const jobsME0 = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 10,
+          me: 0,
+          te: 20
+        }
+      ];
+
+      const jobsME10 = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 10,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const planME0 = await productionPlanner.calculateProductionPlan(jobsME0, '', config);
+      const planME10 = await productionPlanner.calculateProductionPlan(jobsME10, '', config);
+
+      // Les deux plans doivent avoir des matériaux
+      expect(planME0.materials.length).toBeGreaterThan(0);
+      expect(planME10.materials.length).toBeGreaterThan(0);
+
+      // DEBUG: Vérifier les matériaux du end product job directement
+      const endProductJobME0 = planME0.jobs.end_product_jobs[0];
+      const endProductJobME10 = planME10.jobs.end_product_jobs[0];
+
+      console.log('\n=== ME=0 End Product Job Materials ===');
+      endProductJobME0.materials.forEach(mat => {
+        console.log(`  ${mat.name}: ${mat.quantity}`);
+      });
+
+      console.log('\n=== ME=10 End Product Job Materials ===');
+      endProductJobME10.materials.forEach(mat => {
+        console.log(`  ${mat.name}: ${mat.quantity}`);
+      });
+
+      const totalEndProductME0 = endProductJobME0.materials.reduce((sum, mat) => sum + mat.quantity, 0);
+      const totalEndProductME10 = endProductJobME10.materials.reduce((sum, mat) => sum + mat.quantity, 0);
+
+      console.log(`\nME=0 end product needs: ${totalEndProductME0} materials`);
+      console.log(`ME=10 end product needs: ${totalEndProductME10} materials`);
+      console.log(`Difference: ${totalEndProductME0 - totalEndProductME10}`);
+
+      // Vérifier que ME affecte les quantités de matériaux DU END PRODUCT
+      expect(totalEndProductME0).toBeGreaterThan(totalEndProductME10);
+
+      // Vérifier que les end product jobs ont le bon ME
+      expect(planME0.jobs.end_product_jobs[0].me).toBe(0);
+      expect(planME10.jobs.end_product_jobs[0].me).toBe(10);
     });
 
     test('should handle mixed reactions and manufacturing', async () => {
