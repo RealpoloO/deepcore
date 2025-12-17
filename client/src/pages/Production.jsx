@@ -16,8 +16,6 @@ function Production() {
   const { toast, showToast } = useToast();
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [activeFilter, setActiveFilter] = useState('all');
-  const [lastRefresh, setLastRefresh] = useState(null);
-  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
 
   // Update current time every second for countdown
   useEffect(() => {
@@ -49,41 +47,6 @@ function Production() {
       console.error('Jobs fetch error:', err);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Sync jobs from ESI for all characters
-  const syncAllCharacters = async () => {
-    if (characters.length === 0) return;
-    
-    setError(null);
-    let successCount = 0;
-    let errorCount = 0;
-    
-    setLoading(true);
-
-    for (const char of characters) {
-      try {
-        await axios.post(`/api/industry/sync/${char.character_id}`, {}, { withCredentials: true });
-        successCount++;
-      } catch (error) {
-        console.error(`Error syncing ${char.character_name}:`, error);
-        errorCount++;
-      }
-    }
-
-    setLoading(false);
-    setLastRefresh(Date.now());
-
-    if (successCount > 0) {
-      await loadJobs();
-      if (errorCount === 0) {
-        showToast(`✅ ${successCount} personnage(s) synchronisé(s)`, 'success');
-      } else {
-        showToast(`⚠️ ${successCount} synchronisés, ${errorCount} erreur(s)`, 'warning');
-      }
-    } else {
-      setError('Impossible de synchroniser les jobs');
     }
   };
 
@@ -178,23 +141,6 @@ function Production() {
     return 'active';
   };
 
-  // Format time until next refresh
-  const getTimeUntilNextRefresh = () => {
-    if (!lastRefresh) return 'Prochaine actualisation automatique dans 2h';
-    const nextRefresh = lastRefresh + (2 * 60 * 60 * 1000); // +2 hours
-    const remaining = nextRefresh - currentTime;
-    
-    if (remaining <= 0) return 'Actualisation en cours...';
-    
-    const seconds = Math.floor(remaining / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    
-    if (hours > 0) return `Prochaine actualisation dans ${hours}h ${minutes % 60}m`;
-    if (minutes > 0) return `Prochaine actualisation dans ${minutes}m ${seconds % 60}s`;
-    return `Prochaine actualisation dans ${seconds}s`;
-  };
-
   // Get activity type from job
   const getJobActivityType = (activityId) => {
     if (activityId === 9) return 'reactions';
@@ -225,16 +171,6 @@ function Production() {
       <div className="content-container">
         <main className="main-content">
           {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
-          
-          <div className="production-header">
-            <h1>🏭 Production & Industrie</h1>
-            <div className="refresh-section">
-              {lastRefresh && <span className="next-refresh">{getTimeUntilNextRefresh()}</span>}
-              <button onClick={syncAllCharacters} className="btn-refresh" disabled={loading}>
-                🔄 Synchroniser
-              </button>
-            </div>
-          </div>
 
           {loading && jobs.length === 0 ? (
             <div className="loading">Chargement des jobs...</div>

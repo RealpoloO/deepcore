@@ -1,14 +1,25 @@
-# WhatDidIMine - Eve Online Mining Tracker
+# WhatDidIMine - Eve Online Mining Tracker & Production Planner
 
-Application web pour suivre votre minage Eve Online sur tous vos personnages.
+Application web pour suivre votre minage Eve Online et planifier votre production industrielle.
 
 ## Fonctionnalités
 
+### Mining Tracker
 - 🔐 Authentification Eve SSO (OAuth 2.0)
 - 👥 Gestion multi-personnages
 - 📊 Historique de minage par personnage
 - 📈 Statistiques et totaux agrégés
 - 💎 Suivi des volumes de minerais
+
+### Production Planner
+- 🏭 Calcul de chaînes de production complètes (manufacturing + reactions)
+- 📦 Bill of Materials (BOM) automatique avec gestion des profondeurs
+- ⚙️ Support Material Efficiency (ME) et Time Efficiency (TE)
+- 🔄 Job splitting intelligent basé sur les slots disponibles
+- 📋 Gestion des stocks existants
+- 🚫 Blacklist par catégories ou items personnalisés
+- ⏱️ Calcul des timelines de production en parallèle
+- 📊 Organisation par catégories (reactions, components, fuel blocks, etc.)
 
 ## Prérequis
 
@@ -69,3 +80,50 @@ L'application sera accessible sur:
 - **Frontend**: React, Vite, React Router
 - **API**: Eve Online ESI API
 - **Auth**: Eve SSO OAuth 2.0
+- **Data**: Eve Online SDE (Static Data Export) - Types, Blueprints, Groups
+
+## Architecture du Production Planner
+
+Le Production Planner utilise une architecture en 4 phases:
+
+### Phase 1: Calcul des BOM (Bill of Materials)
+- Calcul récursif des matériaux nécessaires pour chaque end product
+- Consommation du stock existant pendant le calcul
+- Séparation entre matériaux à produire et matériaux à acheter
+- Gestion de la blacklist (catégories et items personnalisés)
+
+### Phase 2: Création et Splitting des Jobs
+- Organisation des jobs par catégories (intermediate reactions, fuel blocks, components, etc.)
+- Splitting intelligent des jobs longs selon les slots disponibles
+- Respect des seuils configurés (`dontSplitShorterThan`)
+
+### Phase 3: Calcul des Matériaux par Job
+- Application des coefficients ME/TE pour chaque job
+- Calcul des quantités finales et temps de production
+- ME ne s'applique PAS aux reactions (conforme à Eve Online)
+
+### Phase 4: Organisation et Timelines
+- Simulation d'exécution parallèle par catégorie
+- Calcul des timelines globales (reaction slots vs manufacturing slots)
+- Agrégation finale des matériaux de base à acheter
+
+## Tests
+
+Le projet inclut 44 tests unitaires couvrant:
+- Parsing des stocks
+- Système de blacklist
+- Calcul de production (manufacturing + reactions)
+- Splitting des jobs
+- Consommation de stock
+- Gestion des erreurs
+- Agrégation des matériaux
+
+Lancer les tests:
+```bash
+npm test
+```
+
+Lancer uniquement les tests du Production Planner:
+```bash
+npm test -- productionPlanner.test.js
+```

@@ -170,7 +170,7 @@ function Ware() {
       
       <div className="ware-container">
         <div className="ware-header">
-          <h1>📦 Market Comparison</h1>
+          <h1>Market Comparison</h1>
           <p>Comparez les prix entre Jita et C-J6MT avec coût d'import</p>
         </div>
 
@@ -191,7 +191,7 @@ function Ware() {
 
         {/* Import zone */}
         <div className="ware-import">
-          <label htmlFor="import-text">Importer depuis le clipboard (Format: Nom TAB Quantité)</label>
+          <label htmlFor="import-text">Importer depuis le clipboard (Format: Nom Quantité)</label>
           <textarea
             id="import-text"
             value={importText}

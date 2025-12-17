@@ -125,11 +125,13 @@ UnknownItemThatDoesNotExist 500`;
 
   describe('calculateProductionPlan', () => {
     test('should calculate plan for simple manufacturing item', async () => {
-      // Test avec un item simple qui peut être fabriqué
+      // Test avec un item qui a un blueprint de manufacturing
       const jobs = [
         {
-          product: 'Tritanium', // Pas de blueprint, devrait être dans materials
-          runs: 1
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
         }
       ];
 
@@ -142,23 +144,26 @@ UnknownItemThatDoesNotExist 500`;
 
       const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
 
-      // Tritanium n'a pas de blueprint, devrait être dans les matériaux
+      // Nanite Repair Paste a un blueprint, devrait créer des jobs
       expect(plan).toHaveProperty('materials');
       expect(plan).toHaveProperty('jobs');
       expect(plan).toHaveProperty('categoryTimings');
       expect(plan).toHaveProperty('totalProductionTimeDays');
+      expect(plan.totalJobs).toBeGreaterThan(0);
     });
 
     test('should use stock when available', async () => {
       // Si on a assez en stock, pas besoin de produire
       const jobs = [
         {
-          product: 'Tritanium',
-          runs: 1
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
         }
       ];
 
-      const stockText = 'Tritanium: 1000000'; // Beaucoup en stock
+      const stockText = 'Nanite Repair Paste 1000000'; // Beaucoup en stock
 
       const config = {
         reactionSlots: 20,
@@ -169,16 +174,19 @@ UnknownItemThatDoesNotExist 500`;
 
       const plan = await productionPlanner.calculateProductionPlan(jobs, stockText, config);
 
-      // Avec du stock, on devrait avoir moins ou pas de matériaux à acheter
-      expect(plan).toHaveProperty('materials');
+      // Avec assez de stock, pas de jobs à créer
+      expect(plan.totalJobs).toBe(0);
+      expect(plan.materials.length).toBe(0);
     });
 
     test('should respect blacklist', async () => {
-      // Utiliser un item qui a un blueprint pour tester la blacklist correctement
+      // Tester que la blacklist empêche la production de certains items
       const jobs = [
         {
-          product: 'Tritanium',
-          runs: 1
+          product: 'Carbon Fiber',
+          runs: 1,
+          me: 10,
+          te: 20
         }
       ];
 
@@ -187,16 +195,18 @@ UnknownItemThatDoesNotExist 500`;
         manufacturingSlots: 30,
         dontSplitShorterThan: 1.2,
         blacklist: {
-          customItems: 'Tritanium'
+          fuelBlocks: true // Blacklist Fuel Blocks
         }
       };
 
       const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
 
-      // Test que la blacklist a été appliquée (la fonction isBlacklisted a été testée séparément)
-      // Tritanium sera dans materials car il n'a pas de blueprint ET il est blacklisté
-      expect(plan.materials).toBeDefined();
-      expect(Array.isArray(plan.materials)).toBe(true);
+      // Hydrogen Fuel Block devrait être dans materials (blacklisté = à acheter)
+      const fuelBlock = plan.materials.find(m => m.name === 'Hydrogen Fuel Block');
+      expect(fuelBlock).toBeDefined();
+
+      // Et PAS dans les jobs fuel_blocks
+      expect(plan.jobs.fuel_blocks.length).toBe(0);
     });
 
     test('should handle unknown product gracefully', async () => {
@@ -599,6 +609,529 @@ UnknownItemThatDoesNotExist 500`;
           expect(job.depth).toBeLessThanOrEqual(20);
         }
       }
+    });
+  });
+
+  describe('Job Splitting Logic', () => {
+    test('should split long jobs into multiple slots', async () => {
+      // Utiliser un item qui prend du temps et devrait être splitté
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1000, // Beaucoup de runs = long job
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 0.5, // Seuil bas pour forcer le split
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Le job devrait exister
+      expect(plan.totalJobs).toBeGreaterThan(0);
+      expect(plan.jobs.end_product_jobs.length).toBe(1);
+
+      // Vérifier que le job a les propriétés de temps correctes
+      const endProductJob = plan.jobs.end_product_jobs[0];
+      expect(endProductJob.productionTimeDays).toBeGreaterThan(0);
+      expect(endProductJob.runs).toBe(1000);
+    });
+
+    test('should not split short jobs', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1, // Peu de runs = job court
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 100, // Seuil élevé = pas de split
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      expect(plan.jobs.end_product_jobs.length).toBe(1);
+      const endProductJob = plan.jobs.end_product_jobs[0];
+
+      // Pas de splitIndex/splitCount car pas splitté
+      expect(endProductJob.splitIndex).toBeUndefined();
+      expect(endProductJob.splitCount).toBeUndefined();
+    });
+
+    test('should respect slot limits per section', async () => {
+      // Tester avec peu de slots manufacturing
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 100,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 5, // Très peu de slots
+        dontSplitShorterThan: 0.1,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Le plan devrait être calculé sans erreur
+      expect(plan.totalJobs).toBeGreaterThan(0);
+      expect(plan.jobs.end_product_jobs.length).toBe(1);
+    });
+  });
+
+  describe('Stock Consumption', () => {
+    test('should consume stock during BOM calculation', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      // Fournir du stock pour un des matériaux
+      const stockText = `Data Chips 100
+Gel-Matrix Biopaste 100
+Nanites 100`;
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const planWithStock = await productionPlanner.calculateProductionPlan(jobs, stockText, config);
+      const planWithoutStock = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Avec stock, on devrait avoir moins de matériaux à acheter
+      const totalWithStock = planWithStock.materials.reduce((sum, mat) => sum + mat.quantity, 0);
+      const totalWithoutStock = planWithoutStock.materials.reduce((sum, mat) => sum + mat.quantity, 0);
+
+      expect(totalWithStock).toBeLessThan(totalWithoutStock);
+    });
+
+    test('should handle stock that covers entire production', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      // Fournir énormément de stock pour tout couvrir
+      const stockText = `Nanite Repair Paste 1000`;
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, stockText, config);
+
+      // Pas de jobs à créer si tout est en stock
+      expect(plan.totalJobs).toBe(0);
+      expect(plan.materials.length).toBe(0);
+    });
+
+    test('should handle partial stock', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 10,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      // Stock partiel pour un matériau
+      const stockText = `Data Chips 5`;
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, stockText, config);
+
+      // Devrait avoir des jobs et des matériaux (stock partiel utilisé)
+      expect(plan.totalJobs).toBeGreaterThan(0);
+      expect(plan.materials.length).toBeGreaterThan(0);
+
+      // Vérifier que Data Chips est dans les matériaux avec quantité réduite
+      const dataChips = plan.materials.find(m => m.name === 'Data Chips');
+      expect(dataChips).toBeDefined();
+      // La quantité devrait être réduite par rapport à sans stock
+    });
+  });
+
+  describe('Blacklist Functionality', () => {
+    test('should blacklist entire categories', async () => {
+      const jobs = [
+        {
+          product: 'Carbon Fiber', // Nécessite Hydrogen Fuel Block
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {
+          fuelBlocks: true // Blacklist Fuel Blocks
+        }
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Hydrogen Fuel Block devrait être dans materials (à acheter) pas dans jobs
+      const fuelBlock = plan.materials.find(m => m.name === 'Hydrogen Fuel Block');
+      expect(fuelBlock).toBeDefined();
+
+      // Vérifier qu'il n'y a pas de job pour Fuel Blocks
+      expect(plan.jobs.fuel_blocks.length).toBe(0);
+    });
+
+    test('should blacklist custom items by name', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {
+          customItems: 'Data Chips\nNanites'
+        }
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Data Chips et Nanites devraient être dans materials (à acheter)
+      const dataChips = plan.materials.find(m => m.name === 'Data Chips');
+      const nanites = plan.materials.find(m => m.name === 'Nanites');
+
+      expect(dataChips).toBeDefined();
+      expect(nanites).toBeDefined();
+    });
+
+    test('should handle empty blacklist', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {} // Pas de blacklist
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Devrait fonctionner normalement
+      expect(plan.totalJobs).toBeGreaterThan(0);
+      expect(plan.materials.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Category Timings', () => {
+    test('should calculate parallel execution times correctly', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 10,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Vérifier que categoryTimings contient les bonnes informations
+      expect(plan.categoryTimings).toBeDefined();
+      expect(plan.totalProductionTimeDays).toBeGreaterThan(0);
+
+      // Vérifier la structure des timings
+      for (const category in plan.categoryTimings) {
+        const timing = plan.categoryTimings[category];
+        expect(timing).toHaveProperty('totalTimeDays');
+        expect(timing).toHaveProperty('reactionTimeDays');
+        expect(timing).toHaveProperty('manufacturingTimeDays');
+        expect(timing).toHaveProperty('reactionJobs');
+        expect(timing).toHaveProperty('manufacturingJobs');
+        expect(timing).toHaveProperty('totalJobs');
+
+        expect(typeof timing.totalTimeDays).toBe('number');
+        expect(typeof timing.reactionTimeDays).toBe('number');
+        expect(typeof timing.manufacturingTimeDays).toBe('number');
+        expect(timing.totalTimeDays).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    test('should handle jobs with different activity types in same category', async () => {
+      // Utiliser un item qui génère à la fois manufacturing et reactions
+      const jobs = [
+        {
+          product: 'Carbon Fiber',
+          runs: 10,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Devrait avoir des timings pour plusieurs catégories
+      const categoriesWithJobs = Object.keys(plan.categoryTimings);
+      expect(categoriesWithJobs.length).toBeGreaterThan(0);
+
+      // Le temps total devrait être le max de toutes les catégories
+      const maxCategoryTime = Math.max(
+        ...Object.values(plan.categoryTimings).map(ct => ct.totalTimeDays)
+      );
+      expect(plan.totalProductionTimeDays).toBe(maxCategoryTime);
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should handle multiple products with errors gracefully', async () => {
+      const jobs = [
+        {
+          product: 'ValidItem',
+          runs: 1
+        },
+        {
+          product: 'InvalidItemThatDoesNotExist',
+          runs: 1
+        },
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Devrait avoir des erreurs pour les produits invalides
+      expect(plan.errors).toBeDefined();
+
+      // Mais devrait quand même calculer les produits valides si pas d'erreurs critiques
+      // (dépend si tous les produits sont invalides ou pas)
+    });
+
+    test('should handle invalid stock format gracefully', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const stockText = `InvalidFormat
+Tritanium abc
+Valid Item 123`;
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, stockText, config);
+
+      // Devrait retourner des erreurs de parsing mais continuer quand même
+      expect(plan.errors).toBeDefined();
+      expect(plan.errors.length).toBeGreaterThan(0);
+      expect(plan.errors[0].type).toBe('STOCK_PARSING_ERROR');
+    });
+
+    test('should validate quantity limits', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 1000000000, // Quantité énorme
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      // Devrait soit rejeter soit gérer la grosse quantité
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Le plan devrait exister même avec une grosse quantité
+      expect(plan).toBeDefined();
+    });
+  });
+
+  describe('Materials Aggregation', () => {
+    test('should aggregate materials from all jobs correctly', async () => {
+      const jobs = [
+        {
+          product: 'Nanite Repair Paste',
+          runs: 10,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {}
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Vérifier que materials contient uniquement les matériaux de base
+      expect(plan.materials.length).toBeGreaterThan(0);
+
+      // Chaque matériau devrait avoir typeID, name, quantity
+      plan.materials.forEach(material => {
+        expect(material).toHaveProperty('typeID');
+        expect(material).toHaveProperty('name');
+        expect(material).toHaveProperty('quantity');
+        expect(typeof material.typeID).toBe('number');
+        expect(typeof material.name).toBe('string');
+        expect(typeof material.quantity).toBe('number');
+        expect(material.quantity).toBeGreaterThan(0);
+      });
+
+      // Les matériaux devraient être triés par nom
+      for (let i = 1; i < plan.materials.length; i++) {
+        expect(plan.materials[i].name.localeCompare(plan.materials[i - 1].name))
+          .toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    test('should not include intermediate crafted items in materials', async () => {
+      const jobs = [
+        {
+          product: 'Carbon Fiber', // Nécessite Hydrogen Fuel Block (craftable)
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {} // Pas de blacklist = Fuel Block devrait être crafté
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Hydrogen Fuel Block devrait être dans les JOBS (fuel_blocks category)
+      const fuelBlockJobs = plan.jobs.fuel_blocks;
+      expect(fuelBlockJobs.length).toBeGreaterThan(0);
+
+      // Hydrogen Fuel Block NE DEVRAIT PAS être dans materials (car crafté)
+      const fuelBlockInMaterials = plan.materials.find(m => m.name === 'Hydrogen Fuel Block');
+      expect(fuelBlockInMaterials).toBeUndefined();
+    });
+
+    test('should include blacklisted items in materials', async () => {
+      const jobs = [
+        {
+          product: 'Carbon Fiber',
+          runs: 1,
+          me: 10,
+          te: 20
+        }
+      ];
+
+      const config = {
+        reactionSlots: 20,
+        manufacturingSlots: 30,
+        dontSplitShorterThan: 1.2,
+        blacklist: {
+          fuelBlocks: true // Blacklist Fuel Blocks
+        }
+      };
+
+      const plan = await productionPlanner.calculateProductionPlan(jobs, '', config);
+
+      // Hydrogen Fuel Block devrait être dans materials (blacklisté)
+      const fuelBlockInMaterials = plan.materials.find(m => m.name === 'Hydrogen Fuel Block');
+      expect(fuelBlockInMaterials).toBeDefined();
+      expect(fuelBlockInMaterials.quantity).toBeGreaterThan(0);
+
+      // Et PAS dans les jobs
+      expect(plan.jobs.fuel_blocks.length).toBe(0);
     });
   });
 });

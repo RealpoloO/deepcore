@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import ThemeToggle from './ThemeToggle';
+import SyncButton from './SyncButton';
 import './NavBar.css';
 
 function NavBar() {
@@ -146,8 +147,9 @@ function NavBar() {
         </div>
 
         <div className="navbar-actions">
-          <NavLink 
-            to="/dashboard" 
+          <SyncButton />
+          <NavLink
+            to="/dashboard"
             className="settings-icon"
             title="Gestion de compte"
           >

@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { ToastProvider } from './context/ToastContext';
 import Login from './pages/Login';
 import './App.css';
 
@@ -33,9 +34,10 @@ function App() {
     <Router>
       <ThemeProvider>
         <AuthProvider>
-          <div className="app">
-          <Suspense fallback={<LoadingFallback />}>
-            <Routes>
+          <ToastProvider>
+            <div className="app">
+            <Suspense fallback={<LoadingFallback />}>
+              <Routes>
               <Route path="/" element={<Login />} />
               <Route 
                 path="/dashboard" 
@@ -93,9 +95,10 @@ function App() {
                   </PrivateRoute>
                 }
               />
-            </Routes>
-          </Suspense>
-        </div>
+              </Routes>
+            </Suspense>
+          </div>
+          </ToastProvider>
         </AuthProvider>
       </ThemeProvider>
     </Router>

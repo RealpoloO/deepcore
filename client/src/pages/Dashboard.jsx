@@ -75,53 +75,6 @@ function Dashboard() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const syncAllCharacters = async () => {
-    if (characters.length === 0) return;
-    
-    setError(null);
-    let successCount = 0;
-    let errorCount = 0;
-    let errorMessages = [];
-    
-    try {
-      for (const char of characters) {
-        try {
-          await axios.post(`/api/mining/sync/${char.character_id}`, {}, { withCredentials: true });
-          successCount++;
-          // Toast pour chaque personnage synchronisé avec succès
-          addToast(`✅ ${char.character_name} synchronisé avec succès!`, 'success');
-          // Petit délai pour que l'utilisateur puisse voir le toast
-          await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (error) {
-          console.error(`Erreur sync ${char.character_name}:`, error);
-          errorCount++;
-          errorMessages.push(`${char.character_name}: ${error.response?.data?.error || error.message}`);
-          // Toast d'erreur pour ce personnage
-          addToast(`❌ Erreur: ${char.character_name}`, 'error');
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-      
-      // Toast final avec le résumé
-      if (errorCount === 0) {
-        setError(null);
-        addToast(`🎉 Tous les personnages synchronisés! (${successCount}/${characters.length})`, 'success');
-      } else {
-        const errorMsg = `${successCount} réussi(s), ${errorCount} erreur(s). ${errorMessages.slice(0, 2).join('. ')}`;
-        setError(errorMsg);
-        addToast(`⚠️ Sync terminée: ${successCount} succès, ${errorCount} erreur(s)`, 'warning');
-      }
-      
-      // Recharger les données du personnage sélectionné
-      if (selectedCharacter) {
-        loadMiningData();
-      }
-    } catch (error) {
-      console.error('Sync all error:', error);
-      setError(`Erreur lors de la synchronisation: ${error.response?.data?.error || error.message}`);
-    }
-  };
-
   const handleCharacterSelect = (characterId) => {
     setSelectedCharacter(characterId);
   };
@@ -242,16 +195,6 @@ function Dashboard() {
         <main className="main-content">
           {selectedCharacter ? (
             <>
-              <div className="actions-bar">
-                <button 
-                  onClick={syncAllCharacters}
-                  disabled={loading}
-                  className="sync-btn"
-                >
-                  {loading ? '⏳ Synchronisation...' : '🔄 Synchroniser les données'}
-                </button>
-              </div>
-
               {miningData.length > 0 && (
                 <>
                   <section className="stats-section">
@@ -299,12 +242,10 @@ function Dashboard() {
               )}
 
               {miningData.length === 0 && !loading && (
-                <EmptyState 
+                <EmptyState
                   icon="⛏️"
                   title="Aucune donnée de minage"
-                  description="Cliquez sur 'Synchroniser les données' pour récupérer votre historique de minage."
-                  actionText="Synchroniser maintenant"
-                  onAction={syncAllCharacters}
+                  description="Utilisez le bouton 'Synchroniser' dans la barre de navigation pour récupérer votre historique de minage."
                 />
               )}
             </>
