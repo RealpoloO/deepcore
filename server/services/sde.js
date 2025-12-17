@@ -6,7 +6,30 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const sdePath = path.join(__dirname, '../../eve-online-static-data-3133773-jsonl/types.jsonl');
+/**
+ * Trouve et retourne le chemin vers types.jsonl
+ * @returns {string} Chemin vers types.jsonl
+ */
+function getSdePath() {
+  const dataDir = process.env.SDE_DATA_DIR || 'eve-online-static-data';
+  const baseDir = path.join(__dirname, '../..');
+
+  try {
+    const dirs = fs.readdirSync(baseDir).filter(d =>
+      d.startsWith(dataDir) && d.endsWith('-jsonl')
+    );
+
+    if (dirs.length === 0) {
+      throw new Error(`SDE directory not found. Expected pattern: ${dataDir}*-jsonl`);
+    }
+
+    // Si plusieurs versions, prendre la plus récente (tri alphabétique)
+    const latestDir = dirs.sort().reverse()[0];
+    return path.join(baseDir, latestDir, 'types.jsonl');
+  } catch (error) {
+    throw new Error(`Failed to find SDE directory: ${error.message}`);
+  }
+}
 
 // Cache en mémoire pour les recherches rapides
 let typeCache = null;
@@ -16,12 +39,13 @@ let nameLookup = null;
  * Charge tous les types en mémoire au démarrage
  */
 async function loadTypes() {
-  if (typeCache) return;
-
   console.log('📖 Loading SDE types into memory...');
-  
+
   typeCache = new Map();
   nameLookup = new Map();
+
+  const sdePath = getSdePath();
+  console.log(`   Using SDE path: ${sdePath}`);
 
   const rl = readline.createInterface({
     input: fs.createReadStream(sdePath),

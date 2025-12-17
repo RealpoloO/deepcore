@@ -15,6 +15,9 @@
     "install:all": "npm install && cd client && npm install",
     "import:sde": "node server/scripts/import-sde.js",
     "migrate:timestamps": "node server/database/migrations/add-timestamps.js",
+    "sde:check": "node server/scripts/sde-check.js",
+    "sde:update": "node server/scripts/sde-update.js",
+    "sde:version": "node server/scripts/sde-version.js",
     "test": "cross-env NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "cross-env NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "test:coverage": "cross-env NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
@@ -28,6 +31,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "axios": "^1.6.2",
     "better-sqlite3": "^12.5.0",
     "better-sqlite3-session-store": "^0.1.0",

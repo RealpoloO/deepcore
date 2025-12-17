@@ -14,3 +14,7 @@ logs/
 # EVE Online Static Data Export (fichiers trop gros pour GitHub)
 eve-online-static-data-*/
 *.jsonl
+
+# SDE Update temporary files
+temp/
+*.old

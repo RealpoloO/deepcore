@@ -24,6 +24,7 @@ import jobAlertService from './services/jobAlerts.js';
 import marketService from './services/market.js';
 import sdeService from './services/sde.js';
 import blueprintService from './services/blueprintService.js';
+import sdeManager from './services/sdeManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -94,7 +95,16 @@ async function startServer() {
 
     // Start market price sync service
     marketService.start();
-    
+
+    // Start SDE update scheduler
+    logger.info('📅 Starting SDE update scheduler...');
+    sdeManager.startScheduler();
+
+    // Initial SDE update check (non-blocking)
+    sdeManager.checkForUpdates(true).catch(err =>
+      logger.warn('Initial SDE check failed:', err.message)
+    );
+
     app.listen(PORT, () => {
       logger.info(`🚀 Server running on http://localhost:${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);

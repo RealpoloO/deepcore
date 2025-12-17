@@ -4,7 +4,14 @@ const DISCORD_API = 'https://discord.com/api/v10';
 
 class DiscordService {
   constructor() {
-    this.botToken = process.env.DISCORD_BOT_TOKEN;
+    // Bot token loaded lazily from environment
+  }
+
+  /**
+   * Get bot token from environment (lazy loading)
+   */
+  get botToken() {
+    return process.env.DISCORD_BOT_TOKEN;
   }
 
   /**
@@ -51,6 +58,74 @@ class DiscordService {
       console.error('Discord DM error:', error.response?.data || error.message);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Create an embed for SDE update available notification
+   * @param {number} currentVersion - Current build number
+   * @param {number} newVersion - New available build number
+   */
+  createSdeUpdateAvailableEmbed(currentVersion, newVersion) {
+    return {
+      title: '📦 Nouvelle version SDE disponible',
+      description: 'Une mise à jour du Static Data Export est disponible.',
+      color: 0x00D4FF, // Cyan
+      fields: [
+        {
+          name: 'Version actuelle',
+          value: `Build ${currentVersion}`,
+          inline: true
+        },
+        {
+          name: 'Nouvelle version',
+          value: `Build ${newVersion}`,
+          inline: true
+        },
+        {
+          name: 'Commande',
+          value: '```bash\nnpm run sde:update\n```',
+          inline: false
+        }
+      ],
+      timestamp: new Date().toISOString(),
+      footer: {
+        text: 'WhatDidIMine - SDE Update Manager'
+      }
+    };
+  }
+
+  /**
+   * Create an embed for SDE update success notification
+   * @param {number} oldVersion - Previous build number
+   * @param {number} newVersion - New build number
+   */
+  createSdeUpdateSuccessEmbed(oldVersion, newVersion) {
+    return {
+      title: '✅ SDE mis à jour avec succès',
+      description: 'Le Static Data Export a été mis à jour automatiquement.',
+      color: 0x00FF00, // Green
+      fields: [
+        {
+          name: 'Ancienne version',
+          value: `Build ${oldVersion}`,
+          inline: true
+        },
+        {
+          name: 'Nouvelle version',
+          value: `Build ${newVersion}`,
+          inline: true
+        },
+        {
+          name: 'État',
+          value: 'Services rechargés automatiquement',
+          inline: false
+        }
+      ],
+      timestamp: new Date().toISOString(),
+      footer: {
+        text: 'WhatDidIMine - SDE Update Manager'
+      }
+    };
   }
 
   /**

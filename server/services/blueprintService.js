@@ -8,7 +8,30 @@ import sde from './sde.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const blueprintsPath = path.join(__dirname, '../../eve-online-static-data-3133773-jsonl/blueprints.jsonl');
+/**
+ * Trouve et retourne le chemin vers blueprints.jsonl
+ * @returns {string} Chemin vers blueprints.jsonl
+ */
+function getBlueprintsPath() {
+  const dataDir = process.env.SDE_DATA_DIR || 'eve-online-static-data';
+  const baseDir = path.join(__dirname, '../..');
+
+  try {
+    const dirs = fs.readdirSync(baseDir).filter(d =>
+      d.startsWith(dataDir) && d.endsWith('-jsonl')
+    );
+
+    if (dirs.length === 0) {
+      throw new Error(`SDE directory not found. Expected pattern: ${dataDir}*-jsonl`);
+    }
+
+    // Si plusieurs versions, prendre la plus récente (tri alphabétique)
+    const latestDir = dirs.sort().reverse()[0];
+    return path.join(baseDir, latestDir, 'blueprints.jsonl');
+  } catch (error) {
+    throw new Error(`Failed to find blueprints file: ${error.message}`);
+  }
+}
 
 // Cache en mémoire pour les blueprints
 let blueprintCache = null;
@@ -18,12 +41,13 @@ let blueprintByProductCache = null;
  * Charge tous les blueprints en mémoire au démarrage
  */
 async function loadBlueprints() {
-  if (blueprintCache) return;
-
   logger.info('📖 Loading blueprints from SDE...');
 
   blueprintCache = new Map();
   blueprintByProductCache = new Map();
+
+  const blueprintsPath = getBlueprintsPath();
+  logger.info(`   Using blueprints path: ${blueprintsPath}`);
 
   const rl = readline.createInterface({
     input: fs.createReadStream(blueprintsPath),

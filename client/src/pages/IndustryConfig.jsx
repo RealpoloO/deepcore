@@ -314,7 +314,7 @@ const IndustryConfig = () => {
               <textarea
                 id="customItems"
                 className="custom-items-textarea"
-                placeholder="e.g. Tritanium&#10;Pyerite&#10;Mexallon"
+                placeholder="Neurolink protection cell&#10;Ftl-&#10;Ect..."
                 value={blacklist.customItems}
                 onChange={(e) => handleBlacklistChange('customItems', e.target.value)}
                 rows={6}
