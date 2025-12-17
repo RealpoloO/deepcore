@@ -21,6 +21,40 @@ const IndustryConfig = () => {
     customItems: ''
   });
 
+  const manufacturingCategories = [
+    'Large Ships',
+    'Medium Ships',
+    'Small Ships',
+    'Advanced Large Ships',
+    'Advanced Medium Ships',
+    'Advanced Small Ships',
+    'Capital Ships',
+    'Capital Components',
+    'Advanced Components',
+    'Capital Advanced Components',
+    'Modules and Equipment',
+    'Ammo and Charges',
+    'Drones and Fighters',
+    'Composite Reactions',
+    'Hybrid Reactions',
+    'Bio and Gas-Phase Reactions',
+    'Structures and Fuel blocks'
+  ];
+
+  const defaultEfficiencies = manufacturingCategories.reduce((acc, category) => {
+    const key = category.replace(/\s+/g, '').replace(/-/g, '');
+    acc[key] = {
+      structureME: 0,
+      structureTE: 0,
+      rigME: 0,
+      rigTE: 0,
+      skillTE: 0
+    };
+    return acc;
+  }, {});
+
+  const [manufacturingEfficiencies, setManufacturingEfficiencies] = useState(defaultEfficiencies);
+
   // Load config from localStorage on mount
   useEffect(() => {
     const savedConfig = localStorage.getItem('industry_config');
@@ -31,6 +65,11 @@ const IndustryConfig = () => {
     const savedBlacklist = localStorage.getItem('production_blacklist');
     if (savedBlacklist) {
       setBlacklist(JSON.parse(savedBlacklist));
+    }
+
+    const savedEfficiencies = localStorage.getItem('manufacturing_efficiencies');
+    if (savedEfficiencies) {
+      setManufacturingEfficiencies(JSON.parse(savedEfficiencies));
     }
   }, []);
 
@@ -44,6 +83,19 @@ const IndustryConfig = () => {
     const newBlacklist = { ...blacklist, [field]: value };
     setBlacklist(newBlacklist);
     localStorage.setItem('production_blacklist', JSON.stringify(newBlacklist));
+  };
+
+  const handleEfficiencyChange = (category, field, value) => {
+    const key = category.replace(/\s+/g, '').replace(/-/g, '');
+    const newEfficiencies = {
+      ...manufacturingEfficiencies,
+      [key]: {
+        ...manufacturingEfficiencies[key],
+        [field]: parseFloat(value) || 0
+      }
+    };
+    setManufacturingEfficiencies(newEfficiencies);
+    localStorage.setItem('manufacturing_efficiencies', JSON.stringify(newEfficiencies));
   };
 
   const handleSave = () => {
@@ -72,8 +124,10 @@ const IndustryConfig = () => {
 
       setConfig(defaultConfig);
       setBlacklist(defaultBlacklist);
+      setManufacturingEfficiencies(defaultEfficiencies);
       localStorage.setItem('industry_config', JSON.stringify(defaultConfig));
       localStorage.setItem('production_blacklist', JSON.stringify(defaultBlacklist));
+      localStorage.setItem('manufacturing_efficiencies', JSON.stringify(defaultEfficiencies));
     }
   };
 
@@ -266,6 +320,111 @@ const IndustryConfig = () => {
                 rows={6}
               />
             </div>
+          </div>
+        </div>
+
+        {/* Manufacturing Efficiencies Section */}
+        <div className="config-section">
+          <div className="section-header">
+            <h2>Manufacturing Efficiencies</h2>
+            <p className="section-description">
+              Configurez les bonus ME et TE pour chaque catégorie de production
+            </p>
+          </div>
+
+          <div className="efficiencies-grid">
+            {manufacturingCategories.map((category) => {
+              const key = category.replace(/\s+/g, '').replace(/-/g, '');
+              const efficiencies = manufacturingEfficiencies[key] || {
+                structureME: 0,
+                structureTE: 0,
+                rigME: 0,
+                rigTE: 0,
+                skillTE: 0
+              };
+
+              return (
+                <div key={category} className="efficiency-card">
+                  <h3 className="efficiency-card-title">{category}</h3>
+                  <div className="efficiency-inputs">
+                    <div className="efficiency-input-group">
+                      <label>Structure ME bonus:</label>
+                      <div className="input-with-unit">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={efficiencies.structureME}
+                          onChange={(e) => handleEfficiencyChange(category, 'structureME', e.target.value)}
+                        />
+                        <span className="unit">%</span>
+                      </div>
+                    </div>
+
+                    <div className="efficiency-input-group">
+                      <label>Structure TE bonus:</label>
+                      <div className="input-with-unit">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={efficiencies.structureTE}
+                          onChange={(e) => handleEfficiencyChange(category, 'structureTE', e.target.value)}
+                        />
+                        <span className="unit">%</span>
+                      </div>
+                    </div>
+
+                    <div className="efficiency-input-group">
+                      <label>Rig ME bonus:</label>
+                      <div className="input-with-unit">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={efficiencies.rigME}
+                          onChange={(e) => handleEfficiencyChange(category, 'rigME', e.target.value)}
+                        />
+                        <span className="unit">%</span>
+                      </div>
+                    </div>
+
+                    <div className="efficiency-input-group">
+                      <label>Rig TE bonus:</label>
+                      <div className="input-with-unit">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={efficiencies.rigTE}
+                          onChange={(e) => handleEfficiencyChange(category, 'rigTE', e.target.value)}
+                        />
+                        <span className="unit">%</span>
+                      </div>
+                    </div>
+
+                    <div className="efficiency-input-group">
+                      <label>Approximate Skill TE bonus:</label>
+                      <div className="input-with-unit">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={efficiencies.skillTE}
+                          onChange={(e) => handleEfficiencyChange(category, 'skillTE', e.target.value)}
+                        />
+                        <span className="unit">%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 

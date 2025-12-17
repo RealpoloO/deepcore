@@ -63,15 +63,7 @@ export function initDatabase() {
       )
     `);
 
-    // Create ore types cache table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ore_types (
-        type_id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        volume REAL DEFAULT 1,
-        cached_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    // Note: ore_types table removed - now using SDE service directly
 
     // Create industry jobs table
     db.exec(`

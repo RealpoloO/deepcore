@@ -2,6 +2,7 @@ import express from 'express';
 import axios from 'axios';
 import dbHelpers from '../database/helpers.js';
 import esiService from '../services/esi.js';
+import sdeService from '../services/sde.js';
 import logger from '../utils/logger.js';
 import { syncLimiter } from '../middleware/rateLimiter.js';
 import { validate, characterIdSchema } from '../middleware/validation.js';
@@ -171,15 +172,14 @@ router.get('/stats/all', requireAuth, async (req, res) => {
   const { startDate, endDate } = req.query;
 
   let query = `
-    SELECT 
+    SELECT
       c.character_id,
       c.character_name,
       m.type_id,
-      SUM(m.quantity * COALESCE(o.volume, 1)) as total_quantity,
+      SUM(m.quantity) as total_quantity,
       COUNT(DISTINCT m.date) as mining_days
     FROM mining_records m
     JOIN characters c ON m.character_id = c.character_id
-    LEFT JOIN ore_types o ON m.type_id = o.type_id
     WHERE c.user_id = ?
   `;
   const params = [userId];
@@ -194,11 +194,24 @@ router.get('/stats/all', requireAuth, async (req, res) => {
     params.push(endDate);
   }
 
-  query += ' GROUP BY c.character_id, c.character_name, m.type_id ORDER BY total_quantity DESC';
+  query += ' GROUP BY c.character_id, c.character_name, m.type_id';
 
   const stats = await dbHelpers.all(query, params);
 
-  res.json({ stats });
+  // Enrichir avec les volumes depuis le SDE
+  const enrichedStats = stats.map(stat => {
+    const type = sdeService.getTypeById(stat.type_id);
+    const volume = type ? type.volume : 1;
+    return {
+      ...stat,
+      total_quantity: stat.total_quantity * volume
+    };
+  });
+
+  // Trier par quantité totale
+  enrichedStats.sort((a, b) => b.total_quantity - a.total_quantity);
+
+  res.json({ stats: enrichedStats });
 });
 
 // Get mining summary by ore type
@@ -207,14 +220,13 @@ router.get('/stats/by-ore', requireAuth, async (req, res) => {
   const { startDate, endDate } = req.query;
 
   let query = `
-    SELECT 
+    SELECT
       m.type_id,
-      SUM(m.quantity * COALESCE(o.volume, 1)) as total_quantity,
+      SUM(m.quantity) as total_quantity,
       COUNT(DISTINCT m.character_id) as characters_mined,
       COUNT(DISTINCT m.date) as days_mined
     FROM mining_records m
     JOIN characters c ON m.character_id = c.character_id
-    LEFT JOIN ore_types o ON m.type_id = o.type_id
     WHERE c.user_id = ?
   `;
   const params = [userId];
@@ -229,13 +241,26 @@ router.get('/stats/by-ore', requireAuth, async (req, res) => {
     params.push(endDate);
   }
 
-  query += ' GROUP BY m.type_id ORDER BY total_quantity DESC';
+  query += ' GROUP BY m.type_id';
 
   const oreStats = await dbHelpers.all(query, params);
 
+  // Enrichir avec les volumes depuis le SDE
+  const enrichedOreStats = oreStats.map(stat => {
+    const type = sdeService.getTypeById(stat.type_id);
+    const volume = type ? type.volume : 1;
+    return {
+      ...stat,
+      total_quantity: stat.total_quantity * volume
+    };
+  });
+
+  // Trier par quantité totale
+  enrichedOreStats.sort((a, b) => b.total_quantity - a.total_quantity);
+
   // Calculer les stats globales
   let globalQuery = `
-    SELECT 
+    SELECT
       COUNT(DISTINCT m.date) as total_days,
       COUNT(DISTINCT m.character_id) as active_characters,
       COUNT(DISTINCT m.type_id) as unique_ores
@@ -257,7 +282,7 @@ router.get('/stats/by-ore', requireAuth, async (req, res) => {
 
   const globalStats = await dbHelpers.get(globalQuery, globalParams);
 
-  res.json({ oreStats, globalStats });
+  res.json({ oreStats: enrichedOreStats, globalStats });
 });
 
 // Get ore type names (with cache)
@@ -328,13 +353,11 @@ router.get('/calendar/:year/:month', requireAuth, async (req, res) => {
     const lastDayStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     const query = `
-      SELECT 
+      SELECT
         DATE(m.date) as mining_date,
         m.type_id,
-        SUM(m.quantity) as total_quantity,
-        SUM(m.quantity * COALESCE(o.volume, 1)) as total_volume
+        SUM(m.quantity) as total_quantity
       FROM mining_records m
-      LEFT JOIN ore_types o ON m.type_id = o.type_id
       WHERE m.character_id IN (${placeholders})
         AND DATE(m.date) >= DATE(?)
         AND DATE(m.date) <= DATE(?)
@@ -344,21 +367,25 @@ router.get('/calendar/:year/:month', requireAuth, async (req, res) => {
 
     const records = await dbHelpers.all(query, [...characterIds, firstDay, lastDayStr]);
 
-    // Organize by day
+    // Organize by day with volumes from SDE
     const days = {};
     for (const record of records) {
       const day = record.mining_date;
+      const type = sdeService.getTypeById(record.type_id);
+      const volume = type ? type.volume : 1;
+      const total_volume = record.total_quantity * volume;
+
       if (!days[day]) {
         days[day] = {
           total_volume: 0,
           ores: []
         };
       }
-      days[day].total_volume += record.total_volume;
+      days[day].total_volume += total_volume;
       days[day].ores.push({
         type_id: record.type_id,
         quantity: record.total_quantity,
-        volume: record.total_volume
+        volume: total_volume
       });
     }
 

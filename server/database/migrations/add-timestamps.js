@@ -89,45 +89,60 @@ try {
     updateNullTimestamps('mining_records', 'updated_at', 'synced_at');
   }
 
-  // 3. Table ore_types
-  console.log('\n📝 Mise à jour de la table ore_types...');
+  // 3. Table ore_types - DEPRECATED
+  // Note: La table ore_types n'est plus utilisée (remplacée par le service SDE)
+  // Cette migration est conservée pour la compatibilité avec les anciennes bases de données
+  console.log('\n📝 Migration de la table ore_types (deprecated)...');
 
-  // Vérifier si cached_at existe
-  const hasCachedAt = columnExists('ore_types', 'cached_at');
-  const hasCreatedAt = columnExists('ore_types', 'created_at');
+  // Vérifier si la table existe encore
+  const tableCheckResult = db.prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='ore_types'
+  `).get();
 
-  if (hasCachedAt && !hasCreatedAt) {
-    // Recréer la table pour renommer cached_at en created_at
-    console.log('   🔄 Renommage de cached_at en created_at...');
+  if (tableCheckResult) {
+    console.log('   ℹ️  Table ore_types détectée (legacy) - migration des timestamps...');
 
-    db.exec(`
-      -- Créer une nouvelle table avec le bon schéma
-      CREATE TABLE ore_types_new (
-        type_id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        volume REAL DEFAULT 1,
-        created_at DATETIME,
-        updated_at DATETIME
-      );
+    // Vérifier si cached_at existe
+    const hasCachedAt = columnExists('ore_types', 'cached_at');
+    const hasCreatedAt = columnExists('ore_types', 'created_at');
 
-      -- Copier les données
-      INSERT INTO ore_types_new (type_id, name, volume, created_at, updated_at)
-      SELECT type_id, name, volume, cached_at, cached_at FROM ore_types;
+    if (hasCachedAt && !hasCreatedAt) {
+      // Recréer la table pour renommer cached_at en created_at
+      console.log('   🔄 Renommage de cached_at en created_at...');
 
-      -- Supprimer l'ancienne table
-      DROP TABLE ore_types;
+      db.exec(`
+        -- Créer une nouvelle table avec le bon schéma
+        CREATE TABLE ore_types_new (
+          type_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          volume REAL DEFAULT 1,
+          created_at DATETIME,
+          updated_at DATETIME
+        );
 
-      -- Renommer la nouvelle table
-      ALTER TABLE ore_types_new RENAME TO ore_types;
-    `);
+        -- Copier les données
+        INSERT INTO ore_types_new (type_id, name, volume, created_at, updated_at)
+        SELECT type_id, name, volume, cached_at, cached_at FROM ore_types;
 
-    console.log('   ✅ Table ore_types migrée avec succès');
+        -- Supprimer l'ancienne table
+        DROP TABLE ore_types;
+
+        -- Renommer la nouvelle table
+        ALTER TABLE ore_types_new RENAME TO ore_types;
+      `);
+
+      console.log('   ✅ Table ore_types migrée avec succès');
+    } else {
+      addTimestampColumn('ore_types', 'created_at');
+      addTimestampColumn('ore_types', 'updated_at');
+
+      updateNullTimestamps('ore_types', 'created_at');
+      updateNullTimestamps('ore_types', 'updated_at', 'created_at');
+    }
+
+    console.log('   💡 Note: Cette table peut être supprimée manuellement (DROP TABLE ore_types)');
   } else {
-    addTimestampColumn('ore_types', 'created_at');
-    addTimestampColumn('ore_types', 'updated_at');
-
-    updateNullTimestamps('ore_types', 'created_at');
-    updateNullTimestamps('ore_types', 'updated_at', 'created_at');
+    console.log('   ✅ Table ore_types non trouvée (déjà supprimée ou utilisation du SDE)');
   }
 
   // 4. Table industry_jobs
