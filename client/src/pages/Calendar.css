@@ -18,7 +18,7 @@
 }
 
 .btn-nav,
-.btn-today {
+.btn-courant {
   padding: 0.5rem 1rem;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);

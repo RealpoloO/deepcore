@@ -193,10 +193,10 @@ function Calendar() {
           {error && <ErrorBanner message={error} onClose={() => setError(null)} />}
           
           <div className="calendar-header">
-            <h1>📅 Calendrier de Minage</h1>
+            <h1>Calendrier de Minage</h1>
             <div className="calendar-controls">
               <button onClick={goToPreviousMonth} className="btn-nav">←</button>
-              <button onClick={goToToday} className="btn-today">Aujourd'hui</button>
+              <button onClick={goToToday} className="btn-courant">Mois Courant</button>
               <button onClick={goToNextMonth} className="btn-nav">→</button>
             </div>
             <h2 className="calendar-month">{monthNames[month - 1]} {year}</h2>
