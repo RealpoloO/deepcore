@@ -36,11 +36,18 @@ rm get-docker.sh
 echo "👤 Ajout de l'utilisateur au groupe docker..."
 sudo usermod -aG docker $USER
 
-# Installation de Docker Compose (dernière version)
+# Installation de Docker Compose
 echo "📦 Installation de Docker Compose..."
-COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
-sudo curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
+
+# Méthode 1: Plugin Docker Compose (recommandé pour versions récentes)
+echo "   Tentative d'installation du plugin Docker Compose..."
+sudo apt install -y docker-compose-plugin 2>/dev/null || {
+    echo "   Plugin non disponible, installation de docker-compose standalone..."
+    # Méthode 2: Standalone (pour compatibilité)
+    COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
+    sudo curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+}
 
 # Activer Docker au démarrage
 echo "🚀 Activation de Docker au démarrage..."
@@ -52,7 +59,13 @@ echo "✅ Installation terminée!"
 echo ""
 echo "📋 Versions installées:"
 docker --version
-docker-compose --version
+
+# Vérifier quelle version de compose est disponible
+if command -v docker-compose &> /dev/null; then
+    docker-compose --version
+elif docker compose version &> /dev/null; then
+    docker compose version
+fi
 echo ""
 echo "⚠️  IMPORTANT: Vous devez redémarrer votre session pour que les changements prennent effet."
 echo "   Déconnectez-vous et reconnectez-vous, ou redémarrez avec: sudo reboot"

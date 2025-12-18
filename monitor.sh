@@ -5,13 +5,23 @@
 
 set -e
 
+# Détecter la commande docker compose disponible
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+elif docker compose version &> /dev/null; then
+    DOCKER_COMPOSE="docker compose"
+else
+    echo "❌ Erreur: docker-compose n'est pas installé!"
+    exit 1
+fi
+
 echo "📊 WhatDidIMine - Monitoring Dashboard"
 echo "========================================"
 echo ""
 
 # État du container
 echo "🐳 État des containers Docker:"
-docker-compose ps
+$DOCKER_COMPOSE ps
 echo ""
 
 # Utilisation des ressources
@@ -32,7 +42,7 @@ echo ""
 
 # Version SDE
 echo "📦 Version SDE:"
-docker-compose exec -T whatdidimine node server/scripts/sde-version.js 2>/dev/null || echo "Impossible de récupérer la version SDE"
+$DOCKER_COMPOSE exec -T whatdidimine node server/scripts/sde-version.js 2>/dev/null || echo "Impossible de récupérer la version SDE"
 echo ""
 
 # Espace disque
@@ -58,7 +68,7 @@ echo ""
 
 # Dernières lignes des logs
 echo "📝 Dernières lignes des logs (5 dernières):"
-docker-compose logs --tail=5 2>/dev/null || echo "Logs non disponibles"
+$DOCKER_COMPOSE logs --tail=5 2>/dev/null || echo "Logs non disponibles"
 echo ""
 
 # Uptime du système
@@ -75,7 +85,7 @@ echo ""
 
 echo "========================================"
 echo "💡 Commandes utiles:"
-echo "  docker-compose logs -f       # Voir les logs en direct"
-echo "  docker-compose restart       # Redémarrer"
-echo "  ./backup.sh                  # Créer une sauvegarde"
-echo "  docker-compose exec whatdidimine npm run sde:check  # Vérifier SDE"
+echo "  $DOCKER_COMPOSE logs -f       # Voir les logs en direct"
+echo "  $DOCKER_COMPOSE restart       # Redémarrer"
+echo "  ./backup.sh                   # Créer une sauvegarde"
+echo "  $DOCKER_COMPOSE exec whatdidimine npm run sde:check  # Vérifier SDE"
