@@ -18,3 +18,15 @@ eve-online-static-data-*/
 # SDE Update temporary files
 temp/
 *.old
+
+# Backups
+backups/
+*.tar.gz
+
+# Docker volumes et data
+data/
+logs/
+
+# Scripts de test (ne pas versionner en production)
+server/scripts/test-*.js
+server/scripts/check-discord-bot.js

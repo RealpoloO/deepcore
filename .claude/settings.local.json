@@ -15,7 +15,8 @@
       "Bash(Get-Process)",
       "Bash(Select-String \"node\")",
       "Bash(tasklist:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(test -f:*)"
     ]
   }
 }

@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  whatdidimine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatdidimine
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.production
+    volumes:
+      # Base de données persistante
+      - ./data:/app/data
+      # Logs persistants
+      - ./logs:/app/logs
+      # SDE data (Static Data Export)
+      - ./eve-online-static-data:/app/eve-online-static-data
+      # Fichiers temporaires (pour les téléchargements SDE)
+      - ./temp:/app/temp
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Paris
+    healthcheck:
+      test: ["CMD", "node", "server/scripts/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - whatdidimine-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  whatdidimine-network:
+    driver: bridge

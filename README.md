@@ -21,6 +21,18 @@ Application web pour suivre votre minage Eve Online et planifier votre productio
 - ⏱️ Calcul des timelines de production en parallèle
 - 📊 Organisation par catégories (reactions, components, fuel blocks, etc.)
 
+### Job Alerts
+- 🔔 Notifications Discord pour les jobs industry terminés
+- ⏰ Vérification automatique toutes les minutes
+- 📱 Alertes en temps réel via DM Discord
+
+### SDE Auto-Update
+- 🔄 Vérification quotidienne des mises à jour du Static Data Export
+- 📥 Téléchargement et installation automatiques
+- 💬 Notifications Discord DM pour les nouvelles versions
+- 🔒 Installation atomique avec rollback en cas d'erreur
+- 🛠️ Scripts CLI: `npm run sde:check`, `npm run sde:update`, `npm run sde:version`
+
 ## Prérequis
 
 - Node.js 18+ 
@@ -65,6 +77,8 @@ Ou télécharger manuellement depuis: https://developers.eveonline.com/resource/
 
 ## Démarrage
 
+### Mode Développement
+
 Mode développement (backend + frontend):
 ```bash
 npm run dev
@@ -73,6 +87,34 @@ npm run dev
 L'application sera accessible sur:
 - Frontend: http://localhost:3001
 - Backend: http://localhost:3000
+
+### Mode Production (Docker)
+
+Pour déployer en production sur Raspberry Pi ou serveur:
+
+**Voir le guide complet:** [DEPLOYMENT.md](DEPLOYMENT.md)
+
+**Résumé rapide:**
+```bash
+# Copier et configurer l'environnement
+cp .env.production.example .env.production
+# Éditer .env.production avec vos vraies valeurs
+
+# Déployer
+chmod +x deploy.sh
+./deploy.sh
+
+# L'application sera disponible sur http://IP:3000
+```
+
+**Commandes Docker utiles:**
+```bash
+docker-compose up -d              # Démarrer
+docker-compose down               # Arrêter
+docker-compose logs -f            # Logs
+docker-compose restart            # Redémarrer
+./backup.sh                       # Créer une sauvegarde
+```
 
 ## Stack Technique
 

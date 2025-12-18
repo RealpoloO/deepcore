@@ -1,0 +1,49 @@
+# Node modules
+node_modules
+client/node_modules
+
+# Development files
+.env.development
+.env.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage
+
+# Build artifacts
+client/dist
+*.old
+
+# Temporary files
+temp
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs
+
+# Database (will be in volume)
+*.db
+*.db-journal
+
+# Scripts de test
+server/scripts/test-*.js
+server/scripts/check-discord-bot.js
